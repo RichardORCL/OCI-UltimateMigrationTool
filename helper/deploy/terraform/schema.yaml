@@ -1,9 +1,7 @@
 title: "OCI Ultimate Migration Tool"
 description: >
-  Deploys the OCI Migration Tool VM: an Oracle Linux 9 instance running the web UI and migration
-  engine that exports VMs from vCenter or ESXi and recreates them as OCI compute instances,
-  plus a network security group, the seed image bucket and the IAM resources (dynamic group,
-  policy, tag namespace) it needs.
+  Deploys the OCI Ultimate Migration Tool for VM migration, image import/export, ISO installation
+  and remote console access, with supporting networking, storage and IAM resources.
 schemaVersion: 1.1.0
 version: "0.2.0"
 locale: "en"
