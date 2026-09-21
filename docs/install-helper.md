@@ -85,7 +85,7 @@ terraform output helper_ui_url    # prints the UI URL
 - a network security group (in the network compartment, `network_compartment_ocid`) allowing TCP 8443
   (web UI) and 22 (SSH) from `allowed_source_cidrs`, all egress;
 - the `oci-umt-seed-images` Object Storage bucket used while importing seed images;
-- (when `create_iam = true`) the `oci-umt` tag namespace, a dynamic group matching the tagged instance
+- (when `create_iam = true`) the `UltimateMigrationTool` tag namespace, a dynamic group matching the tagged instance
   in the Migration Tool compartment, and a policy granting it `manage instance-family` /
   `manage volume-family` / `use virtual-network-family` in `policy_scope_compartment_ocid` (default:
   tenancy), plus `manage instance-images` / `compute-image-capability-schema` / volume attachments in
@@ -102,9 +102,15 @@ terraform output helper_ui_url    # prints the UI URL
 **Target instances can only be created in the Migration Tool's AD** because boot volumes are AD-local;
 deploy one stack per AD if you need more.
 
-When `create_iam = false`, an administrator must create beforehand: tag namespace `oci-umt` with key
+When `create_iam = false`, an administrator must create beforehand: tag namespace `UltimateMigrationTool` with key
 `role`; a dynamic group matching the Migration Tool instance in its compartment; and the policy
 statements listed in `main.tf`.
+
+The defined tag is `UltimateMigrationTool.role = helper`. Namespace names beginning with `oci` or
+`orcl` are [reserved by Oracle](https://docs.oracle.com/en-us/iaas/Content/Tagging/Tasks/managingtagsandtagnamespaces.htm).
+For an existing Resource Manager stack, upload the updated stack ZIP before running Plan; updating
+the repository does not update a stack's saved Terraform configuration. Review namespace and dynamic
+group changes before Apply, particularly if an older namespace was already created or shared.
 
 ## 3. Verify
 

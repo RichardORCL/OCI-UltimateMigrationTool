@@ -62,7 +62,9 @@ still controls which application revision cloud-init installs.
 
 ## Naming and compatibility
 
-Use **OCI Ultimate Migration Tool** in product copy and `oci-umt` for new OCI labels. The distribution,
+Use **OCI Ultimate Migration Tool** in product copy, `UltimateMigrationTool` for the defined tag
+namespace, and `oci-umt` for freeform tags and other OCI labels. Defined tag namespaces must not use
+Oracle's reserved `oci` or `orcl` prefixes. The distribution,
 CLI and systemd service remain `vc-oci-helper`; `/opt/vc-oci`, `/var/lib/vc-oci-helper`, `HELPER_`
 environment variables and the `vcoci_session` cookie are compatibility identifiers. Changing them
 requires an explicit upgrade path. The shared `moid` API field holds provider-native VM identifiers.

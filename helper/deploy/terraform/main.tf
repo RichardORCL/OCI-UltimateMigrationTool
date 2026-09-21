@@ -21,7 +21,7 @@ provider "oci" {
 locals {
   network_compartment = var.network_compartment_ocid != "" ? var.network_compartment_ocid : var.compartment_ocid
   policy_scope  = var.policy_scope_compartment_ocid != "" ? "compartment id ${var.policy_scope_compartment_ocid}" : "tenancy"
-  tag_namespace = "oci-umt"
+  tag_namespace = "UltimateMigrationTool"
   tag_role_key  = "role"
   dynamic_group = "${var.helper_display_name}-dg"
 }
@@ -99,16 +99,16 @@ resource "oci_objectstorage_bucket" "seed" {
 }
 
 # ---------------------------------------------------------------------------- IAM (instance principal)
-resource "oci_identity_tag_namespace" "vc_oci" {
+resource "oci_identity_tag_namespace" "migration_tool" {
   count          = var.create_iam ? 1 : 0
   compartment_id = var.compartment_ocid
   name           = local.tag_namespace
-  description    = "OCI Ultimate Migration Tool (VMware to OCI export)"
+  description    = "Resources used by OCI Ultimate Migration Tool"
 }
 
 resource "oci_identity_tag" "role" {
   count            = var.create_iam ? 1 : 0
-  tag_namespace_id = oci_identity_tag_namespace.vc_oci[0].id
+  tag_namespace_id = oci_identity_tag_namespace.migration_tool[0].id
   name             = local.tag_role_key
   description      = "Role of the resource in the OCI Ultimate Migration Tool workflow"
 }
@@ -159,7 +159,7 @@ resource "oci_identity_policy" "helper" {
 }
 
 # IAM objects are created in the home region and replicated asynchronously. Launching the instance
-# with the freshly created defined tag right away fails with "TagNamespace oci-umt does not exists",
+# with the freshly created defined tag right away can fail with a tag namespace not found error,
 # so give the replication time to reach the Compute service in the target region.
 resource "time_sleep" "iam_propagation" {
   count           = var.create_iam ? 1 : 0
@@ -200,7 +200,7 @@ resource "oci_core_instance" "helper" {
   }
 
   # The tag selects the instance into the dynamic group. When create_iam is false the namespace
-  # "oci-umt" with key "role" must already exist in the tenancy.
+  # "UltimateMigrationTool" with key "role" must already exist in the tenancy.
   defined_tags = { "${local.tag_namespace}.${local.tag_role_key}" = "helper" }
 
   metadata = {

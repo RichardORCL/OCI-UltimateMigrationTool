@@ -164,7 +164,7 @@ variables:
   create_iam:
     type: boolean
     title: "Create IAM resources"
-    description: "Dynamic group, policy and the oci-umt tag namespace (requires administrator rights in the tenancy root)"
+    description: "Dynamic group, policy and the UltimateMigrationTool tag namespace (requires administrator rights in the tenancy root)"
     default: true
 
   policy_scope_compartment_ocid:
