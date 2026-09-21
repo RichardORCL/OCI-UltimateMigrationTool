@@ -55,6 +55,11 @@ python helper/tools/check_repository.py
 This regenerates `docs/configuration-defaults.md` and the committed Resource Manager ZIP. CI checks
 that the ZIP matches the source templates and local documentation file links resolve.
 
+The README deployment button pins the ZIP to a published Git commit to avoid reusing a mutable
+download URL. After publishing a changed ZIP, update the button to that commit and verify the remote
+archive before publishing the README change. The pin selects the stack templates; `source_git_ref`
+still controls which application revision cloud-init installs.
+
 ## Naming and compatibility
 
 Use **OCI Ultimate Migration Tool** in product copy and `oci-umt` for new OCI labels. The distribution,
