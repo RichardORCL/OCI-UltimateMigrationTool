@@ -1,0 +1,63 @@
+# --- Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.eggs/
+.venv/
+venv/
+env/
+.python-version
+
+# --- test / lint / type-check caches and reports
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+junit*.xml
+pytest-report*.xml
+
+# --- local runtime state of the helper (jobs DB, TLS material, runtime settings, logs)
+*.sqlite3*
+*.db
+*.log
+runtime-settings.json
+.env
+.env.*
+helper/data/
+helper/certs/
+certs/
+
+# --- Terraform / Resource Manager local state (the stack zip in the repo root IS committed)
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+*.auto.tfvars
+crash.log
+
+# --- editors / OS
+.idea/
+.vscode/
+.cursor/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# --- AI assistants / local agent artifacts (not product documentation)
+docs/superpowers/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.claude/
+.codex/

@@ -1,0 +1,23 @@
+# Local `terraform apply` (Resource Manager injects tenancy_ocid / region / compartment_ocid itself).
+tenancy_ocid         = "ocid1.tenancy.oc1..aaaa"
+region               = "eu-frankfurt-1"
+compartment_ocid     = "ocid1.compartment.oc1..aaaa"
+availability_domain  = "Uocm:EU-FRANKFURT-1-AD-1"
+# network_compartment_ocid = "ocid1.compartment.oc1..network"   # VCN/subnet compartment when it differs from compartment_ocid
+vcn_ocid             = "ocid1.vcn.oc1.eu-frankfurt-1.aaaa"
+subnet_ocid          = "ocid1.subnet.oc1.eu-frankfurt-1.aaaa"
+assign_public_ip     = false
+allowed_source_cidrs = ["10.20.0.0/16"] # administrators' networks reaching the web UI (VPN/FastConnect)
+ssh_public_key       = "ssh-ed25519 AAAA... admin@example.com"
+
+# The vCenter/ESXi server and TLS verification are entered on the login page of the web UI.
+
+# Installation: the migration tool is cloned from this repository and installed with pip on the VM
+source_git_url = "https://github.com/RichardORCL/OCI-UltimateMigrationTool.git"
+source_git_ref = "main"
+
+# max_concurrent_jobs = 2
+
+# IAM: set create_iam = false if an administrator already created the dynamic group/policy/tag namespace
+create_iam = true
+# policy_scope_compartment_ocid = "ocid1.compartment.oc1..migrations"

@@ -1,0 +1,204 @@
+:root {
+  --fg: #1b2a32;
+  --muted: #5f6b73;
+  --border: #d5dde2;
+  --bg: #f0f3f5;
+  --card: #ffffff;
+  --primary: #0072a3;
+  --danger: #c92100;
+  --warn: #8a6d00;
+  --ok: #2f8b3a;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; font: 13px/1.45 "Segoe UI", Arial, sans-serif; color: var(--fg); background: var(--bg); }
+a { color: var(--primary); }
+h2 { font-size: 15px; margin: 0 0 8px; font-weight: 600; }
+
+.topbar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: #1b2a32; color: #fff; }
+.topbar .brand { font-weight: 600; font-size: 15px; white-space: nowrap; }
+.topbar-spacer { flex: 1; min-width: 8px; }
+.topbar-home, .topbar nav a, .topbar .topbar-logoff { color: #cfd8dd; text-decoration: none; padding: 6px 10px; border-radius: 3px; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; }
+.topbar-home { padding: 6px 8px; }
+.topbar nav { display: flex; gap: 4px; align-items: center; }
+.topbar-home.active, .topbar-home:hover, .topbar nav a.active, .topbar nav a:hover, .topbar .topbar-logoff:hover { background: rgba(255,255,255,.12); color: #fff; }
+.topbar nav a.topbar-icon, .topbar .topbar-logoff { padding: 6px 8px; }
+.topbar .topbar-logoff { background: transparent; border: 0; font: inherit; cursor: pointer; }
+.topbar .user { display: flex; gap: 10px; align-items: center; color: #cfd8dd; }
+
+.app { padding: 16px; max-width: 1400px; margin: 0 auto; }
+.loading { color: var(--muted); }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 4px; padding: 14px; margin-bottom: 14px; }
+.login { max-width: 420px; margin: 60px auto; }
+.login .rbac { margin-top: 14px; }
+.login .rbac summary { cursor: pointer; color: var(--primary); }
+.login .rbac pre.log { max-height: none; margin: 8px 0; }
+/* start page: four boxes (two sources, ISO, console) to choose the kind of work */
+.start { max-width: 900px; margin: 50px auto; }
+.start h2 { text-align: center; font-size: 18px; margin-bottom: 18px; }
+.start-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+@media (max-width: 760px) { .start-choices { grid-template-columns: 1fr; } }
+.start-choice { display: flex; flex-direction: column; gap: 8px; padding: 22px; text-decoration: none; color: var(--fg); transition: border-color .15s, box-shadow .15s; }
+.start-choice:hover { border-color: var(--primary); box-shadow: 0 2px 10px rgba(0, 114, 163, .18); }
+.start-choice h3 { margin: 0; font-size: 16px; color: var(--primary); }
+.start-choice p { margin: 0; color: var(--muted); flex: 1; }
+.start-choice .button { align-self: flex-start; margin-top: 6px; }
+.start-actions { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+.login .actions .info { flex: 0 0 auto; }
+.toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+.toolbar h2 { margin: 0; flex: 0 0 auto; }
+.toolbar input[type=search] { flex: 1; min-width: 200px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 3px; font: inherit; }
+.toolbar select.filter { max-width: 260px; padding: 5px 6px; border: 1px solid var(--border); border-radius: 3px; font: inherit; background: #fff; }
+.toolbar select.filter.small { padding: 3px 6px; font-size: 12px; }  /* remote console: F-key picker next to the small buttons */
+.pager { display: flex; gap: 10px; align-items: center; justify-content: flex-end; margin-top: 10px; flex-wrap: wrap; }
+.pager label { display: flex; gap: 6px; align-items: center; font-size: 12px; }
+.pager select { padding: 3px 4px; border: 1px solid var(--border); border-radius: 3px; font: inherit; }
+.export { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 900px) { .export { grid-template-columns: 1fr; } }
+
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; }
+.kv .k { color: var(--muted); }
+.kv .v { overflow-wrap: anywhere; min-width: 0; }  /* long OCIDs wrap, normal text breaks at spaces */
+
+.form label { display: block; margin-bottom: 8px; }
+.form label > select, .form label > input[type=text], .form label > input[type=password], .form label > input[type=number] { display: block; width: 100%; margin-top: 2px; padding: 5px 6px; border: 1px solid var(--border); border-radius: 3px; font: inherit; }
+.form .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.form .row2 label { margin-bottom: 2px; }
+.form .form-hint { margin-bottom: 8px; }
+/* text input with a button at its right end (e.g. private IP + Check) */
+.form label > .input-row { display: flex; gap: 6px; margin-top: 2px; }
+.form label > .input-row > input[type=text] { flex: 1; min-width: 0; padding: 5px 6px; border: 1px solid var(--border); border-radius: 3px; font: inherit; }
+.form label > .input-row > .button { white-space: nowrap; }
+.form small.ok { color: var(--ok); }
+.form input:invalid { border-color: var(--danger, #c0392b); }
+.form label.attention > select { border-color: var(--danger); }
+.form label.attention > small { color: var(--danger); }
+.form input[readonly] { background: #f3f5f7; color: var(--muted); }
+.setup { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.setup .card:first-child { grid-column: 1 / -1; }
+.setup .card:nth-child(2) { grid-row: span 2; }
+code { font-family: Consolas, monospace; font-size: 12px; background: #eef1f3; padding: 0 3px; border-radius: 2px; }
+@media (max-width: 900px) { .setup { grid-template-columns: 1fr; } }
+textarea.diag { width: 100%; margin-top: 6px; font: 12px/1.4 Consolas, monospace; border: 1px solid var(--border); border-radius: 3px; padding: 8px; white-space: pre; }
+pre.log, textarea.log { background: #1b2a32; color: #d7e0e5; padding: 10px; border-radius: 3px; font: 12px/1.4 Consolas, monospace; max-height: 320px; overflow: auto; white-space: pre-wrap; }
+textarea.log { width: 100%; box-sizing: border-box; border: 1px solid #2a3d48; resize: vertical; min-height: 240px; }
+textarea.log:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; background: #e3eef5; color: var(--primary); }
+.badge.ok { background: #e3f5e6; color: var(--ok); }
+.badge.warn { background: #fff4d6; color: var(--warn); }
+.badge.bad { background: #fbe5e1; color: var(--danger); }
+.nowrap { white-space: nowrap; }
+/* Setup > Helper > Resource usage: meters next to the numbers and the live canvas chart */
+.setup .toolbar h3 { margin: 0; font-size: 14px; }
+.meter { display: inline-block; vertical-align: middle; width: 120px; height: 8px; margin-right: 8px; background: #e1e6ea; border-radius: 4px; overflow: hidden; }
+.meter > span { display: block; height: 100%; background: var(--primary); transition: width .4s; }
+.meter.warn > span { background: var(--warn); }
+.meter.bad > span { background: var(--danger); }
+.chart-wrap { margin-top: 10px; }
+.chart-wrap canvas { display: block; width: 100%; height: 220px; }
+.chart-legend { display: flex; gap: 16px; font-size: 12px; margin-top: 4px; flex-wrap: wrap; }
+.chart-legend span:last-child { margin-left: auto; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.swatch.cpu { background: #0072a3; }
+.swatch.rx { background: #2f8b3a; }
+.swatch.tx { background: #d9822b; }
+/* (i) button next to a badge: opens a help dialog */
+button.info { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; margin-left: 4px; border-radius: 50%; border: 1px solid var(--primary); background: #fff; color: var(--primary); font: 700 11px/1 Georgia, serif; vertical-align: middle; cursor: pointer; }
+button.info:hover { background: var(--primary); color: #fff; }
+dialog.help { max-width: 640px; border: 1px solid var(--border); border-radius: 4px; padding: 18px 22px; font-size: 14px; line-height: 1.5; }
+dialog.help-wide { max-width: min(820px, 96vw); }
+dialog.help-wide pre.log, dialog.help-wide textarea.log { max-height: 340px; font-size: 11px; }
+dialog.help ul { padding-left: 22px; margin: 8px 0; }
+dialog.help li { margin: 4px 0; }
+dialog.help::backdrop { background: rgba(0, 0, 0, .35); }
+dialog.help h2 { margin: 0 0 8px; font-size: 17px; }
+dialog.help ol { padding-left: 22px; }
+dialog.help li { margin: 6px 0; }
+dialog.help .actions { justify-content: flex-end; margin-top: 12px; }
+.form small { display: block; color: var(--muted); }
+.check { display: flex; gap: 6px; align-items: center; }
+/* Azure capture choice (in the source card, not the form): same look as the form's fieldsets; the radios
+   carry two lines of explanation, so the button aligns with the first line */
+#azure-capture { border: 1px solid var(--border); border-radius: 3px; margin: 10px 0 4px; padding: 6px 10px; }
+#azure-capture legend { color: var(--muted); padding: 0 4px; }
+#azure-capture .check { align-items: flex-start; margin: 6px 0; }
+#azure-capture .check input { margin-top: 3px; }
+#azure-capture small { display: block; color: var(--muted); margin-top: 4px; }
+#aws-capture { border: 1px solid var(--border); border-radius: 3px; margin: 10px 0 4px; padding: 6px 10px; }
+#aws-capture legend { color: var(--muted); padding: 0 4px; }
+#aws-capture .check { align-items: flex-start; margin: 6px 0; }
+#aws-capture .check input { margin-top: 3px; }
+#aws-capture small { display: block; color: var(--muted); margin-top: 4px; }
+.form fieldset { border: 1px solid var(--border); border-radius: 3px; margin: 8px 0; padding: 6px 10px; }
+.form details { margin: 8px 0; }
+.form summary { cursor: pointer; color: var(--primary); }
+.actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 8px; }
+button, .button { font: inherit; padding: 6px 14px; border-radius: 3px; border: 1px solid var(--primary); cursor: pointer; text-decoration: none; display: inline-block; line-height: 1.2; }
+button.primary, .button.primary { background: var(--primary); color: #fff; }
+button.secondary, .button.secondary { background: #fff; color: var(--primary); }
+button.secondary.danger, .button.secondary.danger { color: var(--danger); border-color: var(--danger); }
+hr.sep { border: 0; border-top: 1px solid var(--border); margin: 14px 0; }
+button.small, .button.small { padding: 3px 10px; font-size: 12px; }
+button:disabled, .button.disabled { opacity: .5; cursor: default; pointer-events: none; }
+.error { color: var(--danger); flex: 1; }
+.callout { margin: 10px 0 4px; padding: 10px 12px; border-radius: 3px; border: 1px solid var(--border); border-left-width: 4px; }
+.callout.important { background: #fff4d6; border-color: #e0c56a; border-left-color: var(--warn); color: #4a3a00; }
+.callout a { font-weight: 600; }
+.problems li { color: var(--danger); }
+.warnings li { color: var(--warn); }
+ul { margin: 6px 0 0; padding-left: 18px; }
+.muted { color: var(--muted); }
+
+table.vms, table.jobs { width: 100%; border-collapse: collapse; }
+table.vms th, table.vms td, table.jobs th, table.jobs td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; overflow-wrap: anywhere; }
+table.vms th, table.jobs th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+/* jobs: fixed column widths so long messages / OCIDs wrap inside the card instead of widening the table */
+table.jobs { table-layout: fixed; }
+table.jobs td.ocid { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+table.jobs td.ocid a { display: inline; }
+table.jobs td.row-actions { text-align: right; }
+table.jobs td.migration { font-size: 12px; line-height: 1.4; }
+table.jobs td.name > span { font-weight: 400; }  /* "source -> target": only the source name is bold */
+@media (max-width: 900px) { table.jobs col.by, table.jobs th.by, table.jobs td.by { display: none; } }
+table.vms tr:hover td { background: #f7f9fa; }
+/* OCI Remote Console: instance picker (same look as jobs, hover like the VM list) */
+table.instances { table-layout: auto; }
+table.instances tr:hover td { background: #f7f9fa; }
+table.instances td.row-actions { white-space: nowrap; }
+.power.RUNNING { background: #e3f5e6; color: var(--ok); }
+.power.STOPPED { background: #eef1f3; color: var(--fg); }
+.power.STARTING, .power.STOPPING, .power.PROVISIONING, .power.CREATING_IMAGE, .power.MOVING { background: #fff4d6; color: var(--warn); }
+td.name { font-weight: 600; }
+td.ocid { font-family: Consolas, monospace; font-size: 11px; word-break: break-all; }
+.power { padding: 1px 6px; border-radius: 8px; font-size: 12px; background: #e1e6ea; color: var(--muted); }
+.power.poweredOn { background: #e3f5e6; color: var(--ok); }
+.power.poweredOff { background: #eef1f3; color: var(--fg); }
+.power.suspended { background: #fff4d6; color: var(--warn); }
+/* Azure: stopped = stopped but still allocated; the transitional states cannot be exported yet */
+.power.stopped { background: #eef1f3; color: var(--fg); }
+.power.starting, .power.stopping, .power.deallocating { background: #fff4d6; color: var(--warn); }
+
+.job-head { display: flex; gap: 10px; align-items: baseline; margin-bottom: 10px; }
+/* two stacked panels: what was created in OCI, then how the migration itself is doing */
+.job-sections { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.job-section { border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px; background: #fafbfc; }
+.job-section h3 { font-size: 13px; margin: 0 0 8px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.job-section .actions:empty, .job-section .actions:not(:has(> :not([hidden]))) { display: none; }
+.transfer { font-size: 13px; margin: -4px 0 8px; font-variant-numeric: tabular-nums; }
+.transfer .bar { margin-top: 4px; }
+.phase { font-weight: 600; padding: 2px 8px; border-radius: 10px; background: #e3eef5; color: var(--primary); text-decoration: none; font-size: 12px; white-space: nowrap; display: inline-block; }
+.phase.COMPLETED { background: #e3f5e6; color: var(--ok); }
+.phase.FAILED, .phase.CANCELLED { background: #fbe5e1; color: var(--danger); }
+.disk { margin: 4px 0; }
+.disk .bar { height: 8px; background: #e1e6ea; border-radius: 4px; overflow: hidden; }
+.disk .bar > div { height: 100%; background: var(--primary); width: 0; transition: width .4s; }
+.disk .bar.done > div { background: var(--ok); }
+.disk .bar.failed > div { background: var(--danger); }
+.disk .meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
+
+/* remote console: the noVNC canvas fills the card below the toolbar */
+.toolbar .spacer { flex: 1; }
+.console .console-hint { margin: 0 0 8px; font-size: 12px; }
+.vnc-screen { position: relative; width: 100%; height: calc(100vh - 230px); min-height: 480px; background: #000; border-radius: 3px; overflow: hidden; }
+.vnc-screen canvas { outline: none; }
+.console-status.ok { color: var(--ok); }

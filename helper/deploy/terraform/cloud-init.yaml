@@ -1,0 +1,87 @@
+#cloud-config
+# Installs the OCI Ultimate Migration Tool (web UI + migration engine) on Oracle Linux 9 from source
+# (git + pip into a virtualenv), generates a self-signed certificate and runs it as the vc-oci-helper
+# systemd unit.
+package_update: true
+packages:
+  - openssl
+  - firewalld
+  - git
+  - lvm2 # post-copy guest fix-up: activate the guest's volume group to reach its root fs
+  - util-linux # lsblk, partx, mount, chroot
+  - attr # setfattr: SELinux labels for the network files written into the guest (fallback to its setfiles)
+  - python3.11
+  - python3.11-pip
+
+write_files:
+  - path: /etc/vc-oci-helper/helper.env
+    permissions: "0600"
+    content: |
+      # vCenter/ESXi server and TLS verification are chosen on the login page of the web UI
+      HELPER_OCI_AUTH=instance_principal
+      HELPER_REGION=${region}
+      HELPER_TENANCY_ID=${tenancy_ocid}
+      HELPER_SEED_BUCKET=${seed_bucket}
+      HELPER_DEFAULT_SHAPE=${default_shape}
+      HELPER_MAX_CONCURRENT_JOBS=${max_concurrent_jobs}
+      HELPER_LISTEN_PORT=8443
+      HELPER_TLS_CERT_FILE=/etc/vc-oci-helper/server.crt
+      HELPER_TLS_KEY_FILE=/etc/vc-oci-helper/server.key
+      HELPER_DB_PATH=/var/lib/vc-oci-helper/jobs.sqlite3
+
+  - path: /usr/local/sbin/vc-oci-helper-install
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      # (Re)install the migration tool from ${source_git_url} @ ${source_git_ref}
+      set -euo pipefail
+      SRC=/opt/vc-oci/src
+      VENV=/opt/vc-oci/venv
+      mkdir -p /opt/vc-oci
+      if [ -d "$SRC/.git" ]; then
+        git -C "$SRC" fetch --all --tags
+      else
+        git clone "${source_git_url}" "$SRC"
+      fi
+      git -C "$SRC" checkout --force "${source_git_ref}"
+      git -C "$SRC" pull --ff-only || true
+      [ -d "$VENV" ] || python3.11 -m venv "$VENV"
+      "$VENV/bin/pip" install --upgrade pip
+      "$VENV/bin/pip" install "$SRC/helper"
+
+  - path: /etc/systemd/system/vc-oci-helper.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=OCI Ultimate Migration Tool
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Restart=always
+      RestartSec=5
+      EnvironmentFile=/etc/vc-oci-helper/helper.env
+      ExecStart=/opt/vc-oci/venv/bin/vc-oci-helper
+      # writes to /dev/oracleoci/oraclevd* so it runs as root
+      User=root
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - mkdir -p /var/lib/vc-oci-helper /etc/vc-oci-helper
+  - |
+    HOSTNAME_FQDN=$(hostname -f 2>/dev/null || hostname)
+    IP=$(hostname -I | awk '{print $1}')
+    openssl req -x509 -newkey rsa:2048 -sha256 -days 1095 -nodes \
+      -keyout /etc/vc-oci-helper/server.key -out /etc/vc-oci-helper/server.crt \
+      -subj "/CN=$${HOSTNAME_FQDN}/O=OCI Ultimate Migration Tool" \
+      -addext "subjectAltName=DNS:$${HOSTNAME_FQDN},IP:$${IP}"
+    chmod 644 /etc/vc-oci-helper/server.crt
+    chmod 600 /etc/vc-oci-helper/server.key
+  - systemctl enable --now firewalld
+  - firewall-cmd --permanent --add-port=8443/tcp
+  - firewall-cmd --reload
+  - /usr/local/sbin/vc-oci-helper-install
+  - systemctl daemon-reload
+  - systemctl enable --now vc-oci-helper

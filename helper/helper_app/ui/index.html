@@ -1,0 +1,1448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>OCI Ultimate Migration Tool</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a href="#/start" class="topbar-home" id="home-link" title="Start page" aria-label="Home">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+    </a>
+    <div class="brand">OCI Ultimate Migration Tool</div>
+    <div class="topbar-spacer"></div>
+    <nav id="nav" class="topbar-nav" hidden>
+      <a href="#/jobs" data-nav="jobs">Jobs</a>
+      <a href="#/setup" data-nav="setup" class="topbar-icon" title="Setup" aria-label="Setup">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96a7.02 7.02 0 0 0-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.455.455 0 0 0-.59.22L2.74 8.87a.48.48 0 0 0-.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.03-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>
+      </a>
+    </nav>
+    <div id="user" class="user" hidden>
+      <span data-username></span>
+    </div>
+    <button type="button" id="logout-btn" class="topbar-icon topbar-logoff" hidden title="Log off" aria-label="Log off">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/></svg>
+    </button>
+  </header>
+
+  <main id="app" class="app">
+    <div class="loading">Loading...</div>
+  </main>
+
+  <!-- ------------------------------------------------------------------ start: choose the kind of migration -->
+  <template id="tpl-start">
+    <section class="start">
+      <h2>What do you want to do?</h2>
+      <div class="start-choices">
+        <a class="card start-choice" href="#/login" id="start-vmware">
+          <h3>VMware vCenter or ESXi</h3>
+          <p>Migrate virtual machines from vSphere to OCI: log in to vCenter (or a standalone ESXi host), pick the VMs,
+            and the migration tool copies their disks into OCI instances.</p>
+          <span class="button primary">Log in to vCenter</span>
+        </a>
+        <div class="card start-choice">
+          <h3>Microsoft Azure</h3>
+          <p>Migrate virtual machines from Azure to OCI: log in with a service principal, pick the VMs, and the migration
+            tool exports their managed disks (after deallocating the VM, or from snapshots while it runs) straight onto
+            OCI volumes.</p>
+          <div class="start-actions">
+            <a class="button primary" href="#/azure/login" id="start-azure">Log in to Azure</a>
+            <button type="button" class="info" id="start-azure-info" title="How Azure authentication works"
+                    aria-label="How Azure authentication works">i</button>
+          </div>
+        </div>
+        <div class="card start-choice">
+          <h3>Migrate Google Compute Engine VMs</h3>
+          <p>Log in with a service account, pick the VMs, and the migration tool
+            exports their persistent disks (via snapshots to your GCS bucket) onto OCI volumes.</p>
+          <div class="start-actions">
+            <a class="button primary" href="#/gcp/login" id="start-gcp">Log in to Google Cloud</a>
+            <button type="button" class="info" id="start-gcp-info" title="How Google Cloud authentication works"
+                    aria-label="How Google Cloud authentication works">i</button>
+          </div>
+        </div>
+        <div class="card start-choice">
+          <h3>AWS EC2 instances</h3>
+          <p>Log in with an IAM access key, pick the instances, and the migration tool
+            exports their EBS volumes (after stopping the instance, or from snapshots while it runs) straight onto
+            OCI volumes.</p>
+          <div class="start-actions">
+            <a class="button primary" href="#/aws/login" id="start-aws">Log in to AWS</a>
+            <button type="button" class="info" id="start-aws-info" title="How AWS authentication works"
+                    aria-label="How AWS authentication works">i</button>
+          </div>
+        </div>
+        <a class="card start-choice" href="#/iso" id="start-iso">
+          <h3>Create OCI instance based on ISO</h3>
+          <p>Boot a new OCI instance from an installer ISO stored in an Object Storage bucket, choose shape, OS type, firmware
+            and boot disk size, and install the operating system through the remote console.</p>
+          <span class="button primary">Create instance from ISO</span>
+        </a>
+        <a class="card start-choice" href="#/ova" id="start-ova">
+          <h3>Import OVA from Object Storage</h3>
+          <p>Upload or pick an OVA (or VMDK) in a bucket; the migration tool imports the boot disk as a custom image,
+            copies any additional disks, and launches the instance in OCI.</p>
+          <span class="button primary">Import OVA</span>
+        </a>
+        <a class="card start-choice" href="#/ova-export" id="start-ova-export">
+          <h3>Export OCI instance to OVA/OVF</h3>
+          <p>Stop a running instance, attach its boot volume to the migration tool (data volumes stay on the instance
+            and are also attached to the Migration Tool), stream each disk as a VMDK into Object Storage with an OVF
+            descriptor and manifest, then reattach the boot volume. The instance is left stopped.</p>
+          <span class="button primary">Export to OVF</span>
+        </a>
+        <a class="card start-choice" href="#/instances" id="start-instances">
+          <h3>OCI Remote Console</h3>
+          <p>OCI Compute instance debugging, using the OCI remote console session service: pick a compartment or search
+            an instance by name, and open its VNC console in the browser to watch it boot or fix it.</p>
+          <span class="button primary">Open remote console</span>
+        </a>
+      </div>
+    </section>
+  </template>
+
+  <!-- ------------------------------------------------------------------ OCI Remote Console: instance picker -->
+  <template id="tpl-instances">
+    <section class="instances">
+      <div class="toolbar">
+        <a href="#/start" class="muted">&larr; start</a>
+        <h2>OCI Remote Console</h2>
+      </div>
+      <p class="muted">Compute instances of a compartment, or found by name across all compartments the migration
+        tool may see (OCI Resource Search). <em>Console</em> creates an instance console connection and opens the VNC
+        console of the instance in the browser; the connection is deleted when the console is closed or idle.</p>
+      <form id="instances-form" class="toolbar" autocomplete="off">
+        <select id="inst-compartment" class="filter" title="Compartment"></select>
+        <input id="inst-search" type="search" placeholder="Search instances by name (all compartments)" maxlength="200">
+        <button type="submit" class="primary small" id="inst-search-btn">Search</button>
+        <button type="button" class="secondary small" id="inst-refresh" title="List the instances of the selected compartment again">Refresh</button>
+      </form>
+      <div id="inst-status" class="muted"></div>
+      <div id="inst-error" class="error"></div>
+      <table class="jobs instances" id="inst-table">
+        <thead>
+          <tr><th>Name</th><th>State</th><th>Shape</th><th>Compartment</th><th>Availability domain</th><th></th></tr>
+        </thead>
+        <tbody id="inst-rows"></tbody>
+      </table>
+    </section>
+  </template>
+
+  <!-- ------------------------------------------------------------------ ISO instance -->
+  <template id="tpl-iso">
+    <div class="export">
+      <section class="card" id="iso-card">
+        <div class="toolbar">
+          <h2>Installer ISO</h2>
+          <a href="#/start" class="muted">&larr; back to start</a>
+        </div>
+        <p class="muted">The ISO is imported as a custom image; the instance boots it as installation media and gets a blank
+          boot volume to install onto. The image is kept and reused for further instances from the same ISO.</p>
+        <form id="iso-form" class="form" autocomplete="off">
+          <label>Bucket compartment
+            <select name="bucket_compartment_id" required></select>
+            <small>Compartment holding the Object Storage bucket with the ISO.</small>
+          </label>
+          <label>Bucket
+            <select name="bucket" required></select>
+            <small id="bucket-hint"></small>
+          </label>
+          <label>ISO file
+            <span class="input-row">
+              <select name="object_name" required></select>
+              <button type="button" id="iso-refresh" class="button secondary" title="List the bucket again">Refresh</button>
+            </span>
+            <small id="iso-hint">Only objects ending in <code>.iso</code> are listed.</small>
+          </label>
+          <label>Operating system
+            <select name="operating_system" required></select>
+            <small>Recorded on the OCI image (OS-specific defaults in OCI); pick the closest match for the installer.</small>
+          </label>
+          <label id="iso-os-version-label">OS version
+            <select name="operating_system_version"></select>
+            <small id="iso-os-version-hint"></small>
+          </label>
+          <div id="iso-windows-note" class="callout important" hidden>
+            <strong>Windows installer.</strong> Windows Setup has no virtio drivers, so the form pre-selects
+            <em>Maximum compatibility</em> (IDE boot volume + E1000 NIC). Install the
+            <a href="https://docs.oracle.com/en/operating-systems/oracle-linux/kvm-virtio/" target="_blank" rel="noopener">Oracle VirtIO Drivers for Microsoft Windows</a>
+            after the installation and switch the device model in the OCI console if you want paravirtualized devices.
+          </div>
+          <fieldset>
+            <legend>Firmware</legend>
+            <label class="check"><input type="radio" name="firmware" value="UEFI_64" checked> UEFI</label>
+            <label class="check"><input type="radio" name="firmware" value="BIOS"> BIOS (legacy)</label>
+            <label class="check" id="secure-boot-label"><input type="checkbox" name="secure_boot"> Secure Boot (shielded instance; UEFI only, with Measured Boot + vTPM on VM shapes)</label>
+            <small>The installer must support the chosen firmware: modern Linux and Windows ISOs boot both ways; Secure Boot needs a signed boot loader.</small>
+          </fieldset>
+          <label>Boot disk size (GB)
+            <input name="boot_disk_gb" type="number" min="50" max="32768" step="1" value="50" required inputmode="numeric">
+            <small>Blank boot volume the OS is installed onto (at least 50 GB, the OCI minimum).</small>
+          </label>
+        </form>
+      </section>
+
+      <section class="card" id="target-card">
+        <h2>OCI instance</h2>
+        <form id="target-form" class="form" autocomplete="off">
+          <label>Compartment
+            <select name="compartment_id" required></select>
+            <small>Where the instance and its boot volume are created.</small>
+          </label>
+          <label>Availability domain
+            <input name="availability_domain" type="text" readonly tabindex="-1">
+            <small>Fixed to the migration tool VM's availability domain.</small>
+          </label>
+          <label>Network compartment
+            <select name="network_compartment_id" required></select>
+            <small>Compartment holding the VCN and subnet (may differ from the instance compartment).</small>
+          </label>
+          <label>VCN
+            <select name="vcn_id" required></select>
+          </label>
+          <label>Subnet
+            <select name="subnet_id" required></select>
+            <small id="subnet-hint"></small>
+          </label>
+          <label>Private IP address
+            <span class="input-row">
+              <input name="private_ip" type="text" inputmode="decimal" placeholder="automatic (DHCP)" maxlength="15"
+                     pattern="^\s*(\d{1,3}\.){3}\d{1,3}\s*$" title="IPv4 address inside the selected subnet, e.g. 10.0.1.25">
+              <button type="button" id="private-ip-check" class="button secondary" disabled title="Ask OCI whether this address is free in the selected subnet">Check</button>
+            </span>
+            <small id="private-ip-hint">Leave empty to let OCI pick a free address from the subnet. A fixed address must lie inside the subnet's CIDR and not be in use; it is checked with OCI as soon as you have typed it.</small>
+          </label>
+          <label class="check"><input type="checkbox" name="assign_public_ip"> Assign a public IP</label>
+          <fieldset>
+            <legend>Instance type</legend>
+            <label class="check"><input type="radio" name="instance_kind" value="VM" checked> Virtual machine</label>
+            <label class="check"><input type="radio" name="instance_kind" value="BM"> Bare metal</label>
+            <small id="instance-kind-hint">Virtual machines are sized freely within the shape's limits; bare metal shapes come with fixed cores and memory.</small>
+          </fieldset>
+          <label>Shape
+            <select name="shape"></select>
+            <small id="shape-hint"></small>
+          </label>
+          <div class="row2" id="sizing-row">
+            <label>OCPUs
+              <input name="ocpus" type="number" min="1" step="1" value="1" required inputmode="numeric">
+            </label>
+            <label>Memory (GB)
+              <input name="memory_gb" type="number" min="1" step="1" value="8" required inputmode="numeric">
+            </label>
+          </div>
+          <small id="sizing-hint" class="form-hint"></small>
+          <label>Instance name
+            <input name="display_name" type="text" maxlength="255" required>
+          </label>
+
+          <fieldset id="windows-fieldset" hidden>
+            <legend>Windows licensing</legend>
+            <label class="check"><input type="radio" name="windows_license_type" value="BRING_YOUR_OWN_LICENSE" checked> Bring your own license (BYOL)</label>
+            <label class="check"><input type="radio" name="windows_license_type" value="OCI_PROVIDED"> OCI provided license</label>
+            <small id="windows-license-hint">The instance is registered as Windows in OCI; the license type can be changed later in the OCI console.</small>
+          </fieldset>
+
+          <details>
+            <summary>Advanced: device model and volume performance</summary>
+            <div class="kv" id="launch-preview"></div>
+            <label class="check"><input type="checkbox" name="compatibility_mode"> Maximum compatibility (IDE boot volume + E1000 NIC) for installers without virtio drivers</label>
+            <label>Boot volume type override
+              <select name="boot_volume_type_override">
+                <option value="">(automatic)</option>
+                <option>PARAVIRTUALIZED</option><option>SCSI</option><option>IDE</option><option>ISCSI</option>
+              </select>
+            </label>
+            <label>Network type override
+              <select name="network_type_override">
+                <option value="">(automatic)</option>
+                <option>PARAVIRTUALIZED</option><option>E1000</option><option>VFIO</option>
+              </select>
+            </label>
+            <label>Volume performance (VPU/GB)
+              <select name="volume_vpus_per_gb">
+                <option value="10" selected>10 - Balanced (default)</option>
+                <option value="20">20 - Higher Performance</option>
+                <option value="30">30 - Ultra High Performance</option>
+              </select>
+            </label>
+          </details>
+
+          <div class="actions">
+            <span id="form-error" class="error"></span>
+            <button type="submit" id="submit-btn" class="primary">Create instance</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  </template>
+
+  <!-- ------------------------------------------------------------------ OVA import -->
+  <template id="tpl-ova">
+    <div class="export">
+      <section class="card" id="ova-card">
+        <div class="toolbar">
+          <h2>OVA in Object Storage</h2>
+          <a href="#/start" class="muted">&larr; back to start</a>
+        </div>
+        <p class="muted">Select an <code>.ova</code>, a standalone <code>.ovf</code> (with its <code>.vmdk</code> files in the same
+          bucket folder), or a boot <code>.vmdk</code>, or upload files to the bucket. The boot disk is imported as a custom image;
+          additional disks are copied onto block volumes before the instance is launched.</p>
+        <form id="ova-form" class="form" autocomplete="off">
+          <label>Bucket compartment
+            <select name="bucket_compartment_id" required></select>
+          </label>
+          <label>Bucket
+            <select name="bucket" required></select>
+            <small id="ova-bucket-hint"></small>
+          </label>
+          <label>OVA file
+            <span class="input-row">
+              <select name="object_name" required multiple size="4"></select>
+              <button type="button" id="ova-refresh" class="button secondary">Refresh</button>
+              <button type="button" id="ova-load" class="button secondary" title="Read the OVF descriptor and suggest OS, size, and firmware">Load OVF</button>
+            </span>
+            <small id="ova-hint">Select one .ova or .ovf and click Load OVF, or hold Ctrl for multiple imports.</small>
+            <small id="ova-load-state" class="muted"></small>
+          </label>
+          <label>Upload OVA or VMDK
+            <input type="file" id="ova-upload" accept=".ova,.ovf,.vmdk" multiple>
+            <small id="ova-upload-state" class="muted"></small>
+          </label>
+          <label>Operating system
+            <select name="operating_system" required></select>
+          </label>
+          <label id="ova-os-version-label">OS version
+            <select name="operating_system_version"></select>
+            <small id="ova-os-version-hint"></small>
+          </label>
+          <div id="ova-windows-note" class="callout important" hidden>
+            <strong>Important: Windows guest.</strong> Install the
+            <a href="https://docs.oracle.com/en/operating-systems/oracle-linux/kvm-virtio/" target="_blank" rel="noopener">Oracle VirtIO Drivers for Microsoft Windows</a>
+            inside the VM <strong>before</strong> you export the OVA when you can. OCI presents the boot disk and the NIC as
+            paravirtualized (virtio) devices; without the drivers Windows may not find its boot disk
+            (<code>INACCESSIBLE_BOOT_DEVICE</code>) and has no network after import.
+            If the image has no virtio drivers, enable <em>Maximum compatibility</em> on the instance form below (IDE disk + E1000 NIC)
+            and install the drivers after the first boot in OCI.
+          </div>
+          <fieldset>
+            <legend>Firmware</legend>
+            <label class="check"><input type="radio" name="firmware" value="UEFI_64" checked> UEFI</label>
+            <label class="check"><input type="radio" name="firmware" value="BIOS"> BIOS (legacy)</label>
+            <label class="check" id="ova-secure-boot-label"><input type="checkbox" name="secure_boot"> Secure Boot</label>
+          </fieldset>
+        </form>
+      </section>
+      <section class="card" id="ova-target-card">
+        <h2>OCI instance</h2>
+        <form id="ova-target-form" class="form" autocomplete="off">
+          <label>Compartment
+            <select name="compartment_id" required></select>
+          </label>
+          <label>Availability domain
+            <input name="availability_domain" type="text" readonly tabindex="-1">
+          </label>
+          <label>Network compartment
+            <select name="network_compartment_id" required></select>
+          </label>
+          <label>VCN
+            <select name="vcn_id" required></select>
+          </label>
+          <label>Subnet
+            <select name="subnet_id" required></select>
+            <small id="subnet-hint"></small>
+          </label>
+          <label>Private IP address
+            <input name="private_ip" type="text" placeholder="automatic (DHCP)" maxlength="15">
+            <small id="private-ip-hint"></small>
+          </label>
+          <button type="button" id="private-ip-check" class="button secondary" hidden>Check</button>
+          <label class="check"><input type="checkbox" name="assign_public_ip"> Assign a public IP</label>
+          <fieldset>
+            <legend>Instance type</legend>
+            <label class="check"><input type="radio" name="instance_kind" value="VM" checked> Virtual machine</label>
+            <label class="check"><input type="radio" name="instance_kind" value="BM"> Bare metal</label>
+          </fieldset>
+          <label>Shape
+            <select name="shape"></select>
+            <small id="shape-hint"></small>
+          </label>
+          <div class="row2" id="sizing-row">
+            <label>OCPUs
+              <input name="ocpus" type="number" min="1" step="1" value="2" required inputmode="numeric">
+            </label>
+            <label>Memory (GB)
+              <input name="memory_gb" type="number" min="1" step="1" value="16" required inputmode="numeric">
+            </label>
+          </div>
+          <small id="sizing-hint" class="form-hint"></small>
+          <label>Instance name
+            <input name="display_name" type="text" required maxlength="255" placeholder="my-imported-vm">
+          </label>
+          <label class="check"><input type="checkbox" name="start_after_migration" checked> Start the instance when the import completes</label>
+
+          <fieldset id="ova-windows-fieldset" hidden>
+            <legend>Windows licensing</legend>
+            <label class="check"><input type="radio" name="windows_license_type" value="BRING_YOUR_OWN_LICENSE" checked> Bring your own license (BYOL)</label>
+            <label class="check"><input type="radio" name="windows_license_type" value="OCI_PROVIDED"> OCI provided license</label>
+            <small id="ova-windows-license-hint">The instance is registered as Windows in OCI; the license type can be changed later in the OCI console.</small>
+          </fieldset>
+
+          <details>
+            <summary>Advanced: device model and volume performance</summary>
+            <div class="kv" id="launch-preview"></div>
+            <label class="check"><input type="checkbox" name="compatibility_mode"> Maximum compatibility (IDE boot volume + E1000 NIC)</label>
+            <label class="check" id="ova-rebuild-initramfs-label"><input type="checkbox" name="rebuild_initramfs" checked> Rebuild the Linux initramfs with virtio drivers after the copy</label>
+            <small id="ova-rebuild-initramfs-hint">Same as VMware/Azure migrations: mount the copied boot volume on the migration tool VM and rebuild dracut initramfs images that lack virtio modules so the guest boots in OCI.</small>
+            <label class="check" id="ova-fix-network-label"><input type="checkbox" name="fix_network" checked> Configure the Linux network for OCI after the copy (DHCP on the new interface)</label>
+            <small id="ova-fix-network-hint">Adds a DHCP profile for the renamed NIC (NetworkManager, netplan, or legacy ifcfg) so the imported VM gets an address on the OCI subnet.</small>
+            <label>Boot volume type override
+              <select name="boot_volume_type_override">
+                <option value="">(automatic)</option>
+                <option>PARAVIRTUALIZED</option><option>SCSI</option><option>IDE</option><option>ISCSI</option>
+              </select>
+            </label>
+            <label>Network type override
+              <select name="network_type_override">
+                <option value="">(automatic)</option>
+                <option>PARAVIRTUALIZED</option><option>E1000</option><option>VFIO</option>
+              </select>
+            </label>
+            <label>Volume performance (VPU/GB)
+              <select name="volume_vpus_per_gb">
+                <option value="10" selected>10 - Balanced (default)</option>
+                <option value="20">20 - Higher Performance</option>
+                <option value="30">30 - Ultra High Performance</option>
+              </select>
+            </label>
+          </details>
+          <div class="actions">
+            <span id="ova-form-error" class="error"></span>
+            <button type="submit" id="ova-submit-btn" class="primary">Import and launch</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  </template>
+
+  <!-- ------------------------------------------------------------------ OVA/OVF export -->
+  <template id="tpl-ova-export">
+    <div class="export">
+      <section class="card" id="ova-export-card">
+        <div class="toolbar">
+          <h2>Export OCI instance to OVA/OVF</h2>
+          <a href="#/start" class="muted">&larr; back to start</a>
+        </div>
+        <p class="muted">Pick an instance and a destination bucket. The migration tool stops the instance (if it is
+          running), detaches only the boot volume, attaches a second shareable copy of each data volume to itself,
+          writes a stream-optimized VMDK per disk plus an OVF descriptor and manifest, then reattaches the boot
+          volume. Data volumes stay on the instance.</p>
+        <div class="callout important">
+          <strong>The instance is stopped and stays stopped after the export.</strong>
+          Start it again from the OCI console when you need it.
+        </div>
+        <form id="ova-export-form" class="form" autocomplete="off">
+          <label>Instance compartment
+            <select name="instance_compartment_id" required></select>
+          </label>
+          <div class="toolbar">
+            <input id="ova-export-search" type="search" placeholder="Search instances by name (all compartments)" maxlength="200">
+            <button type="button" class="secondary small" id="ova-export-search-btn">Search</button>
+            <button type="button" class="secondary small" id="ova-export-refresh">Refresh</button>
+          </div>
+          <div id="ova-export-inst-status" class="muted"></div>
+          <table class="jobs instances" id="ova-export-inst-table">
+            <thead>
+              <tr><th></th><th>Name</th><th>State</th><th>Shape</th><th>Compartment</th></tr>
+            </thead>
+            <tbody id="ova-export-inst-rows"></tbody>
+          </table>
+          <label>Bucket compartment
+            <select name="bucket_compartment_id" required></select>
+          </label>
+          <label>Destination bucket
+            <select name="bucket" required></select>
+            <small id="ova-export-bucket-hint">OVF, VMDK and manifest objects are written here.</small>
+          </label>
+          <label>Folder prefix
+            <input name="prefix" type="text" maxlength="200" placeholder="(instance name)">
+            <small>Objects are stored as <code>prefix/name.ovf</code>, <code>prefix/name-diskN.vmdk</code>, <code>prefix/name.mf</code>.</small>
+          </label>
+          <label class="check">
+            <input type="checkbox" name="include_data_volumes" checked>
+            Include attached block volumes
+          </label>
+          <div class="actions">
+            <span id="ova-export-form-error" class="error"></span>
+            <button type="submit" id="ova-export-submit" class="primary">Export to OVF</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  </template>
+
+  <!-- ------------------------------------------------------------------ first-use UI password -->
+  <template id="tpl-first-use">
+    <section class="card login">
+      <h2>Protect this service?</h2>
+      <p class="muted">Anyone who can reach this VM can use the migration tool until you set a UI password.
+        You can change or remove it later on <em>Setup</em>.</p>
+      <form id="first-use-form" class="form" autocomplete="off">
+        <label>UI password
+          <input name="password" type="password" minlength="8" autocomplete="new-password">
+          <small>At least 8 characters.</small>
+        </label>
+        <label>Confirm password
+          <input name="password2" type="password" minlength="8" autocomplete="new-password">
+        </label>
+        <div class="actions">
+          <span id="first-use-error" class="error"></span>
+          <button type="submit" class="primary" id="first-use-save">Set password</button>
+          <button type="button" class="secondary" id="first-use-skip">Continue without a password</button>
+        </div>
+      </form>
+    </section>
+  </template>
+
+  <!-- ------------------------------------------------------------------ UI password unlock -->
+  <template id="tpl-unlock">
+    <section class="card login">
+      <h2>Unlock migration tool</h2>
+      <form id="unlock-form" class="form" autocomplete="current-password">
+        <label>
+          <input name="password" type="password" required autofocus autocomplete="current-password"
+                 aria-label="Password">
+        </label>
+        <div class="actions">
+          <span id="unlock-error" class="error"></span>
+          <button type="submit" class="primary" id="unlock-btn">Unlock</button>
+        </div>
+      </form>
+    </section>
+  </template>
+
+  <!-- ------------------------------------------------------------------ login -->
+  <template id="tpl-login">
+    <section class="card login">
+      <h2>Log in to vCenter</h2>
+      <p class="muted">Use your vCenter (or ESXi) credentials. The account needs read access to the inventory and
+        <em>Allow disk access</em> / <em>Export</em> on the virtual machines to migrate.</p>
+      <form id="login-form" class="form" autocomplete="on">
+        <label>vCenter server
+          <input name="vcenter" type="text" required list="vcenter-recent" placeholder="vcenter.example.com[:443]" autocapitalize="off" spellcheck="false">
+          <datalist id="vcenter-recent"></datalist>
+          <small>Host name or IP of the vCenter Server or standalone ESXi host, optionally with a port. The migration tool VM must reach it on that port (and on 443 for the disk export).</small>
+        </label>
+        <label class="check"><input type="checkbox" name="verify_ssl"> Verify the server certificate</label>
+        <small class="form-hint">Leave off for the default self-signed / VMCA certificate. When on, the certificate must be issued by a CA the migration tool VM trusts; the same setting is used for the disk download.</small>
+        <label>User name
+          <input name="username" type="text" required autofocus placeholder="administrator@vsphere.local">
+        </label>
+        <label>Password
+          <input name="password" type="password" required>
+        </label>
+        <div class="actions">
+          <span id="login-error" class="error"></span>
+          <button type="submit" class="primary" id="login-btn">Log in</button>
+        </div>
+      </form>
+    </section>
+  </template>
+
+  <!-- ------------------------------------------------------------------ Azure login -->
+  <template id="tpl-azure-login">
+    <section class="card login">
+      <h2>Log in to Microsoft Azure</h2>
+      <p class="muted">Use a <em>service principal</em> (an Entra ID app registration with a client secret). The
+        credentials are kept in memory for this browser session only. The principal needs the <em>Reader</em> role on
+        the subscriptions holding the VMs, plus the disk export actions - see the note below the form.</p>
+      <form id="azure-login-form" class="form" autocomplete="on">
+        <label>Tenant ID
+          <input name="tenant_id" type="text" required autocapitalize="off" spellcheck="false"
+                 placeholder="00000000-0000-0000-0000-000000000000 or contoso.onmicrosoft.com">
+          <small>Directory (tenant) ID of the Entra ID tenant, or its verified domain name.</small>
+        </label>
+        <label>Client ID
+          <input name="client_id" type="text" required autocapitalize="off" spellcheck="false"
+                 placeholder="00000000-0000-0000-0000-000000000000">
+          <small>Application (client) ID of the app registration.</small>
+        </label>
+        <label>Client secret
+          <input name="client_secret" type="password" required autocomplete="current-password">
+        </label>
+        <div class="actions">
+          <span id="azure-login-error" class="error"></span>
+          <button type="submit" class="primary" id="azure-login-btn">Log in</button>
+          <button type="button" class="info" id="azure-login-info" title="How Azure authentication works"
+                  aria-label="How Azure authentication works">i</button>
+        </div>
+      </form>
+      <details class="rbac">
+        <summary>Required Azure permissions</summary>
+        <p class="muted">Assign the built-in <strong>Reader</strong> role on the subscription (lists VMs, disks and
+          sizes) and a custom role with these actions on the resource groups (or the subscription) holding the VMs:</p>
+        <pre class="log">Microsoft.Compute/virtualMachines/deallocate/action
+Microsoft.Compute/disks/beginGetAccess/action
+Microsoft.Compute/disks/endGetAccess/action
+Microsoft.Compute/snapshots/write
+Microsoft.Compute/snapshots/delete
+Microsoft.Compute/snapshots/beginGetAccess/action
+Microsoft.Compute/snapshots/endGetAccess/action</pre>
+        <p class="muted">Typical built-in assignment on each resource group (or the subscription):
+          <strong>Reader</strong> (subscription),
+          <strong>Virtual Machine Contributor</strong> (deallocate VMs),
+          <strong>Disk Snapshot Contributor</strong> (snapshots and granting disk export access), and
+          <strong>Disk Restore Operator</strong> (revoking disk export access / <code>endGetAccess</code> on disks -
+          not included in Disk Snapshot Contributor). Or use one custom role with the actions above.
+          The migration tool VM must reach <code>login.microsoftonline.com</code>,
+          <code>management.azure.com</code> and the Azure blob endpoints (<code>*.blob.core.windows.net</code>,
+          <code>*.blob.storage.azure.net</code>) on TCP 443.</p>
+      </details>
+    </section>
+  </template>
+
+  <!-- ------------------------------------------------------------------ GCP login -->
+  <template id="tpl-gcp-login">
+    <section class="card login">
+      <h2>Log in to Google Cloud</h2>
+      <p class="muted">Paste the JSON key of a <em>service account</em> and the name of a Cloud Storage bucket used for
+        temporary disk exports (objects are deleted when each job finishes). Credentials stay in memory for this session
+        only.</p>
+      <form id="gcp-login-form" class="form" autocomplete="off">
+        <label>Export bucket
+          <input name="export_bucket" type="text" required autocapitalize="off" spellcheck="false"
+                 placeholder="my-migration-exports">
+          <small>GCS bucket in a project the service account can write to (same or different from the VM project).</small>
+        </label>
+        <label>Service account JSON key
+          <textarea name="service_account_json" rows="8" required spellcheck="false" class="log"
+                    placeholder='{"type": "service_account", ...}'></textarea>
+        </label>
+        <div class="actions">
+          <span id="gcp-login-error" class="error"></span>
+          <button type="submit" class="primary" id="gcp-login-btn">Log in</button>
+          <button type="button" class="info" id="gcp-login-info" title="How Google Cloud authentication works"
+                  aria-label="How Google Cloud authentication works">i</button>
+        </div>
+      </form>
+    </section>
+  </template>
+
+  <!-- ------------------------------------------------------------------ AWS login -->
+  <template id="tpl-aws-login">
+    <section class="card login">
+      <h2>Log in to Amazon EC2</h2>
+      <p class="muted">Use an <em>IAM user access key</em> for the account that holds the instances. The credentials
+        are kept in memory for this browser session only. The user needs permission to describe instances and
+        volumes, stop instances, and create/read/delete EBS snapshots - see the note below the form.</p>
+      <form id="aws-login-form" class="form" autocomplete="on">
+        <label>Access Key ID
+          <input name="access_key_id" type="text" required autocapitalize="off" spellcheck="false"
+                 placeholder="AKIAxxxxxxxxxxxxxxxx">
+          <small>IAM user access key (starts with AKIA).</small>
+        </label>
+        <label>Secret Access Key
+          <input name="secret_access_key" type="password" required autocomplete="current-password">
+        </label>
+        <label>Region
+          <select name="region" required>
+            <option value="">Select a region</option>
+            <option>us-east-1</option><option>us-east-2</option><option>us-west-1</option><option>us-west-2</option>
+            <option>ca-central-1</option>
+            <option>eu-west-1</option><option>eu-west-2</option><option>eu-west-3</option>
+            <option>eu-central-1</option><option>eu-central-2</option><option>eu-north-1</option><option>eu-south-1</option>
+            <option>ap-southeast-1</option><option>ap-southeast-2</option><option>ap-southeast-3</option>
+            <option>ap-northeast-1</option><option>ap-northeast-2</option><option>ap-south-1</option><option>ap-east-1</option>
+            <option>sa-east-1</option><option>me-south-1</option><option>me-central-1</option><option>af-south-1</option>
+            <option>il-central-1</option>
+          </select>
+          <small>Only instances in this region are listed. Log in again to work in another region.</small>
+        </label>
+        <div class="actions">
+          <span id="aws-login-error" class="error"></span>
+          <button type="submit" class="primary" id="aws-login-btn">Log in</button>
+          <button type="button" class="info" id="aws-login-info" title="How AWS authentication works"
+                  aria-label="How AWS authentication works">i</button>
+        </div>
+      </form>
+      <details class="rbac">
+        <summary>Required AWS permissions</summary>
+        <p class="muted">Attach this policy (or the equivalent actions) to the IAM user whose access key you paste:</p>
+        <pre class="log">ec2:DescribeInstances
+ec2:DescribeVolumes
+ec2:DescribeSnapshots
+ec2:DescribeInstanceTypes
+ec2:DescribeImages
+ec2:StopInstances
+ec2:CreateSnapshot
+ec2:DeleteSnapshot
+ec2:CreateTags
+ebs:ListSnapshotBlocks
+ebs:GetSnapshotBlock
+kms:Decrypt
+kms:DescribeKey
+kms:CreateGrant</pre>
+        <p class="muted">The last three are only needed for encrypted EBS volumes. The migration tool VM must reach
+          <code>sts.&lt;region&gt;.amazonaws.com</code>, <code>ec2.&lt;region&gt;.amazonaws.com</code> and
+          <code>ebs.&lt;region&gt;.amazonaws.com</code> on TCP 443.</p>
+      </details>
+    </section>
+  </template>
+
+  <!-- ------------------------------------------------------------------ AWS VM list -->
+  <template id="tpl-aws-vms">
+    <section class="card">
+      <div class="toolbar">
+        <h2>AWS EC2 instances</h2>
+        <input id="awsvm-filter" type="search" placeholder="Filter by name, VPC/AZ or OS">
+        <select id="awsvm-group" class="filter" title="VPC / AZ"><option value="">All locations</option></select>
+        <select id="awsvm-os" class="filter" title="Guest OS"><option value="">All guest OSes</option></select>
+        <button class="secondary small" id="awsvm-refresh">Refresh</button>
+        <span id="awsvm-count" class="muted"></span>
+      </div>
+      <div id="awsvm-error" class="error"></div>
+      <table class="vms">
+        <thead>
+          <tr><th>Name</th><th>Location</th><th>Power</th><th>Guest OS</th><th>Type</th><th>AZ</th><th>Disks</th><th>Job</th><th></th></tr>
+        </thead>
+        <tbody id="awsvm-rows"></tbody>
+      </table>
+    </section>
+  </template>
+
+  <!-- ------------------------------------------------------------------ GCP VM list -->
+  <template id="tpl-gcp-vms">
+    <section class="card">
+      <div class="toolbar">
+        <h2>Google Cloud VMs</h2>
+        <input id="gcpvm-filter" type="search" placeholder="Filter by name, project/zone or OS">
+        <select id="gcpvm-group" class="filter" title="Project / zone"><option value="">All locations</option></select>
+        <select id="gcpvm-os" class="filter" title="Guest OS"><option value="">All guest OSes</option></select>
+        <button class="secondary small" id="gcpvm-refresh">Refresh</button>
+        <span id="gcpvm-count" class="muted"></span>
+      </div>
+      <div id="gcpvm-error" class="error"></div>
+      <table class="vms">
+        <thead>
+          <tr><th>Name</th><th>Project / zone</th><th>Power</th><th>Guest OS</th><th>Machine type</th><th>Zone</th><th>Disks</th><th>Last job</th><th></th></tr>
+        </thead>
+        <tbody id="gcpvm-rows"></tbody>
+      </table>
+    </section>
+  </template>
+
+  <!-- ------------------------------------------------------------------ Azure VM list -->
+  <template id="tpl-azure-vms">
+    <section class="card">
+      <div class="toolbar">
+        <h2>Azure VMs</h2>
+        <input id="azvm-filter" type="search" placeholder="Filter by name, resource group or OS">
+        <select id="azvm-group" class="filter" title="Subscription / resource group"><option value="">All resource groups</option></select>
+        <select id="azvm-os" class="filter" title="Guest OS"><option value="">All guest OSes</option></select>
+        <button class="secondary small" id="azvm-refresh">Refresh</button>
+        <span id="azvm-count" class="muted"></span>
+      </div>
+      <div id="azvm-error" class="error"></div>
+      <table class="vms">
+        <thead>
+          <tr><th>Name</th><th>Subscription / resource group</th><th>Power</th><th>Guest OS</th><th>Size</th><th>Location</th><th>Disks</th><th>Last job</th><th></th></tr>
+        </thead>
+        <tbody id="azvm-rows"></tbody>
+      </table>
+    </section>
+  </template>
+
+  <!-- ------------------------------------------------------------------ VM list -->
+  <template id="tpl-vms">
+    <section class="card">
+      <div class="toolbar">
+        <h2>Source VMs</h2>
+        <input id="vm-filter" type="search" placeholder="Filter by name, folder or guest OS">
+        <select id="vm-folder" class="filter" title="VM folder"><option value="">All folders</option></select>
+        <select id="vm-os" class="filter" title="Guest OS"><option value="">All guest OSes</option></select>
+        <label class="check"><input type="checkbox" id="vm-off-only"> powered off only</label>
+        <button class="secondary small" id="vm-refresh">Refresh</button>
+        <span id="vm-count" class="muted"></span>
+      </div>
+      <div id="vm-error" class="error"></div>
+      <table class="vms">
+        <thead>
+          <tr><th>Name</th><th>Folder</th><th>Power</th><th>Guest OS</th><th>vCPU / memory</th><th>Disks</th><th>Last job</th><th></th></tr>
+        </thead>
+        <tbody id="vm-rows"></tbody>
+      </table>
+      <div id="vm-pager" class="pager" hidden>
+        <button class="secondary small" id="vm-prev">&lsaquo; Previous</button>
+        <span id="vm-page-info" class="muted"></span>
+        <button class="secondary small" id="vm-next">Next &rsaquo;</button>
+        <label class="muted">Per page
+          <select id="vm-page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select>
+        </label>
+      </div>
+    </section>
+  </template>
+
+  <!-- ------------------------------------------------------------------ jobs list -->
+  <template id="tpl-jobs">
+    <section class="card">
+      <div class="toolbar">
+        <h2>Jobs</h2>
+        <input id="jobs-filter" type="search" placeholder="Search by source (VM, Azure VM or ISO) or instance name">
+        <select id="jobs-phase" class="filter" title="Phase">
+          <option value="">All phases</option>
+          <option value="ACTIVE">Active (not finished)</option>
+          <option value="QUEUED">Queued</option>
+          <option value="PROVISIONING">Provisioning</option>
+          <option value="EXPORTING">Exporting</option>
+          <option value="FINALIZING">Finalizing</option>
+          <option value="INSTALLING">Installing (ISO)</option>
+          <option value="COMPLETED">Completed</option>
+          <option value="FAILED">Failed</option>
+          <option value="CANCELLED">Cancelled</option>
+        </select>
+        <span id="jobs-count" class="muted"></span>
+      </div>
+      <div id="jobs-error" class="error"></div>
+      <div id="jobs-body"></div>
+      <div id="jobs-pager" class="pager" hidden>
+        <button class="secondary small" id="jobs-prev">&lsaquo; Previous</button>
+        <span id="jobs-page-info" class="muted"></span>
+        <button class="secondary small" id="jobs-next">Next &rsaquo;</button>
+      </div>
+    </section>
+  </template>
+
+  <!-- ------------------------------------------------------------------ export -->
+  <template id="tpl-export">
+    <div class="export">
+      <section class="card" id="vm-card">
+        <div class="toolbar">
+          <h2>Source virtual machine</h2>
+          <a href="#/vms" class="muted">&larr; back to the list</a>
+        </div>
+        <div id="vm-details" class="kv"></div>
+        <div id="power-off-note" class="callout important" hidden>
+          <strong>This VM is powered on.</strong> Starting the migration <strong>shuts it down</strong> right before
+          the disk export (after the OCI instance and volumes are prepared): a guest OS shutdown through VMware Tools,
+          or a hard power-off if Tools is not running or the guest does not stop in time. The VM is not powered on
+          again afterwards. You will be asked to confirm.
+        </div>
+        <fieldset id="azure-capture" hidden>
+          <legend>How to capture the disks</legend>
+          <label class="check"><input type="radio" name="capture_mode" value="deallocate" checked>
+            <strong>Deallocate the VM</strong> and export its disks - consistent copy; the VM is stopped (deallocated)
+            right before the export and stays that way</label>
+          <label class="check"><input type="radio" name="capture_mode" value="snapshot">
+            <strong>Snapshot the disks</strong> while the VM keeps running - crash-consistent copy (like a power loss);
+            changes made after the snapshot are not migrated; the snapshots are deleted when the job ends</label>
+          <small id="azure-capture-hint"></small>
+        </fieldset>
+        <fieldset id="aws-capture" hidden>
+          <legend>How to capture the disks</legend>
+          <label class="check"><input type="radio" name="aws_capture_mode" value="stop" checked>
+            <strong>Stop the instance</strong> and export its EBS volumes - consistent copy; the instance is stopped
+            right before the export and stays stopped</label>
+          <label class="check"><input type="radio" name="aws_capture_mode" value="snapshot">
+            <strong>Snapshot the volumes</strong> while the instance keeps running - crash-consistent copy (like a
+            power loss); changes made after the snapshot are not migrated; the snapshots are deleted when the job
+            ends</label>
+          <small id="aws-capture-hint"></small>
+        </fieldset>
+        <fieldset id="gcp-capture" hidden>
+          <legend>How to capture the disks</legend>
+          <label class="check"><input type="radio" name="gcp_capture_mode" value="stop" checked>
+            <strong>Stop the VM</strong> and export its disks - consistent copy; the instance is stopped right before
+            the export and stays stopped</label>
+          <label class="check"><input type="radio" name="gcp_capture_mode" value="snapshot">
+            <strong>Snapshot the disks</strong> while the VM keeps running - crash-consistent copy; snapshots and GCS
+            export objects are deleted when the job ends</label>
+          <small id="gcp-capture-hint"></small>
+        </fieldset>
+        <div id="windows-driver-note" class="callout important" hidden>
+          <strong>Important: Windows guest.</strong> Install the
+          <a href="https://docs.oracle.com/en/operating-systems/oracle-linux/kvm-virtio/" target="_blank" rel="noopener">Oracle VirtIO Drivers for Microsoft Windows</a>
+          inside the VM <strong>before</strong> you migrate it. OCI presents the boot disk and the NIC as
+          paravirtualized (virtio) devices; without the drivers Windows does not find its boot disk
+          (<code>INACCESSIBLE_BOOT_DEVICE</code>) and has no network after the migration.
+          If the drivers cannot be installed up front, tick <em>Maximum compatibility</em> below (IDE disk + E1000 NIC)
+          and install them after the first boot in OCI.
+        </div>
+        <ul id="vm-problems" class="problems"></ul>
+        <div id="azure-revoke-export" class="callout" hidden>
+          <p id="azure-revoke-text">A previous export or failed migration left read access granted on the disks listed above.</p>
+          <button type="button" id="azure-revoke-btn" class="button primary small">Revoke export access</button>
+          <span id="azure-revoke-status" class="muted"></span>
+        </div>
+        <ul id="vm-warnings" class="warnings"></ul>
+      </section>
+
+      <section class="card" id="target-card">
+        <h2>OCI target</h2>
+        <form id="target-form" class="form" autocomplete="off">
+          <label>Compartment
+            <select name="compartment_id" required></select>
+            <small>Where the instance and its volumes are created.</small>
+          </label>
+          <label>Availability domain
+            <input name="availability_domain" type="text" readonly tabindex="-1">
+            <small>Fixed to the migration tool VM's availability domain: the volumes are written by the migration tool and boot volumes are AD-local.</small>
+          </label>
+          <label>Network compartment
+            <select name="network_compartment_id" required></select>
+            <small>Compartment holding the VCN and subnet (may differ from the instance compartment).</small>
+          </label>
+          <label>VCN
+            <select name="vcn_id" required></select>
+          </label>
+          <label>Subnet
+            <select name="subnet_id" required></select>
+            <small id="subnet-hint"></small>
+          </label>
+          <label>Private IP address
+            <span class="input-row">
+              <input name="private_ip" type="text" inputmode="decimal" placeholder="automatic (DHCP)" maxlength="15"
+                     pattern="^\s*(\d{1,3}\.){3}\d{1,3}\s*$" title="IPv4 address inside the selected subnet, e.g. 10.0.1.25">
+              <button type="button" id="private-ip-check" class="button secondary" disabled title="Ask OCI whether this address is free in the selected subnet">Check</button>
+            </span>
+            <small id="private-ip-hint">Leave empty to let OCI pick a free address from the subnet. A fixed address must lie inside the subnet's CIDR and not be in use; it is checked with OCI as soon as you have typed it (and again when the migration starts).</small>
+          </label>
+          <label class="check"><input type="checkbox" name="assign_public_ip"> Assign a public IP</label>
+          <label>Shape
+            <select name="shape"></select>
+            <small id="shape-hint"></small>
+          </label>
+          <div class="row2">
+            <label>OCPUs
+              <input name="ocpus" type="number" min="1" step="1" inputmode="numeric">
+            </label>
+            <label>Memory (GB)
+              <input name="memory_gb" type="number" min="1" step="1" inputmode="numeric">
+            </label>
+          </div>
+          <small id="sizing-hint" class="form-hint"></small>
+          <label>Instance name
+            <input name="display_name" type="text" maxlength="255">
+          </label>
+          <label id="os-version-label" hidden>Guest OS version
+            <select name="operating_system_version"></select>
+            <small id="os-version-hint"></small>
+          </label>
+          <label class="check"><input type="checkbox" name="start_after_migration" checked> Start the instance when the copy completes</label>
+
+          <fieldset id="windows-fieldset" hidden>
+            <legend>Windows licensing</legend>
+            <label class="check"><input type="radio" name="windows_license_type" value="BRING_YOUR_OWN_LICENSE" checked> Bring your own license (BYOL)</label>
+            <label class="check"><input type="radio" name="windows_license_type" value="OCI_PROVIDED"> OCI provided license</label>
+            <small id="windows-license-hint">The instance is registered as Windows in OCI; the license type can be changed later in the OCI console.</small>
+          </fieldset>
+
+          <details>
+            <summary>Advanced: disk transfer</summary>
+            <div id="nfc-options">
+              <label class="check"><input type="checkbox" name="nfc_direct_to_esxi"> Download the disks directly from the ESXi host <span id="esxi-host-hint"></span> instead of through vCenter</label>
+              <small>Usually much faster than the vCenter proxy, but the migration tool VM must reach that ESXi host on TCP 443 (same as <code>HELPER_NFC_HOST_OVERRIDE</code>, resolved per VM).</small>
+              <label class="check"><input type="checkbox" name="pipelined_decode"> Decode and write on a separate thread (keep downloading while grains are inflated and written)</label>
+              <small>Overlaps the network read with decompression and the volume write instead of doing them one after another. Buffers a few chunks in memory (<code>HELPER_NFC_PIPELINE_DEPTH</code>).</small>
+            </div>
+            <small id="azure-transfer-note" hidden>Azure: only the allocated pages of each managed disk are downloaded (<em>Get Page Ranges</em>), with <code>HELPER_AZURE_RANGE_WORKERS</code> parallel range requests per disk, straight onto the OCI volume. Azure charges egress for the data leaving the region.</small>
+            <small id="gcp-transfer-note" hidden>Google Cloud: each disk is snapshotted and exported to your GCS bucket as a raw object, then copied with parallel HTTP range reads onto the OCI volume. GCS egress and snapshot storage apply until the job finishes.</small>
+            <small id="aws-transfer-note" hidden>Amazon EC2: each EBS volume is snapshotted and only the allocated snapshot blocks are downloaded (<em>EBS Direct</em>), with <code>HELPER_AWS_RANGE_WORKERS</code> parallel block reads per disk, straight onto the OCI volume. AWS charges snapshot storage until the job deletes them, plus egress for the data leaving the region.</small>
+            <label>Volume performance (VPU/GB)
+              <select name="volume_vpus_per_gb">
+                <option value="10" selected>10 - Balanced (default)</option>
+                <option value="20">20 - Higher Performance</option>
+                <option value="30">30 - Ultra High Performance</option>
+              </select>
+              <small>Applied to the boot volume and every block volume created for this VM. A higher tier speeds up the copy and can be lowered in OCI afterwards.</small>
+            </label>
+          </details>
+
+          <details>
+            <summary>Advanced: firmware and device model</summary>
+            <div class="kv" id="launch-preview"></div>
+            <label class="check"><input type="checkbox" name="compatibility_mode"> Maximum compatibility (IDE boot volume + E1000 NIC) for guests without virtio drivers</label>
+            <label class="check" id="rebuild-initramfs-label"><input type="checkbox" name="rebuild_initramfs" checked> Rebuild the Linux initramfs with virtio drivers after the copy</label>
+            <small id="rebuild-initramfs-hint">RHEL, CentOS and Oracle Linux build a <em>hostonly</em> initramfs that only knows VMware's storage drivers, so the copied VM cannot find its root disk in OCI (dracut emergency shell). With this option the migration tool mounts the copied boot volume, and runs the guest's own <code>dracut</code> in a chroot for every kernel whose initramfs lacks virtio modules. Only the OCI copy is changed; guests without dracut (Ubuntu/Debian) are skipped automatically.</small>
+            <label class="check" id="fix-network-label"><input type="checkbox" name="fix_network" checked> Configure the Linux network for OCI after the copy (DHCP on the new interface)</label>
+            <small id="fix-network-hint">The network interface gets a new name in OCI (<code>ens3</code>, <code>enp0s5</code> or <code>eth0</code> instead of <code>ens192</code>), so the VMware profile - bound to the old name and usually to a static address - never comes up. The migration tool adds a NetworkManager profile that matches <em>any</em> Ethernet interface with DHCP (OCI's DHCP always hands out the VNIC's address, also a fixed private IP chosen above), installs a first-boot unit that creates <code>ifcfg-&lt;nic&gt;</code> files on guests using the legacy network scripts, adds netplan/systemd-networkd drop-ins where those are used, and disables udev rules that pin interface names to the VMware MAC addresses. Old profiles are left in place; SELinux labels are set with the guest's own tools.</small>
+            <label class="check" id="azure-cleanup-label" hidden><input type="checkbox" name="azure_cleanup" checked> Azure cleanup after the copy (cloud-init, waagent, serial console)</label>
+            <small id="azure-cleanup-hint" hidden>Azure Linux guests often stall on first boot waiting for Azure metadata, log <code>/dev/sr0</code> errors, and never show a login on the serial console. With this option the migration tool removes Azure cloud-init drop-ins, disables <code>walinuxagent</code>, comments out the Azure CD-ROM in <code>fstab</code>, enables <code>serial-getty@ttyS0</code>, and installs an OCI cloud-init datasource preference — only on the copied boot volume.</small>
+            <label class="check" id="gcp-cleanup-label" hidden><input type="checkbox" name="gcp_cleanup" checked> GCP cleanup after the copy (GCE guest agent / cloud-init)</label>
+            <small id="gcp-cleanup-hint" hidden>Linux images from Google Cloud may wait on GCE metadata on first boot. This option disables Google guest-agent units, removes GCE cloud-init snippets, and prefers the OCI cloud-init datasource on the copied boot volume.</small>
+            <label class="check" id="aws-cleanup-label" hidden><input type="checkbox" name="aws_cleanup" checked> AWS cleanup after the copy (cloud-init, SSM, instance-connect)</label>
+            <small id="aws-cleanup-hint" hidden>Linux images from EC2 may wait on the Amazon metadata service on first boot. This option removes Amazon cloud-init drop-ins, disables <code>amazon-ssm-agent</code> and EC2 instance-connect units, and prefers the OCI cloud-init datasource on the copied boot volume.</small>
+            <label>Boot volume type override
+              <select name="boot_volume_type_override">
+                <option value="">(automatic)</option>
+                <option>PARAVIRTUALIZED</option><option>SCSI</option><option>IDE</option><option>ISCSI</option>
+              </select>
+            </label>
+            <label>Network type override
+              <select name="network_type_override">
+                <option value="">(automatic)</option>
+                <option>PARAVIRTUALIZED</option><option>E1000</option><option>VFIO</option>
+              </select>
+            </label>
+          </details>
+
+          <div class="actions">
+            <span id="form-error" class="error"></span>
+            <button type="submit" id="submit-btn" class="primary">Start migration</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  </template>
+
+  <!-- ------------------------------------------------------------------ setup -->
+  <template id="tpl-setup">
+    <div class="setup">
+      <section class="card">
+        <div class="toolbar">
+          <h2>Software</h2>
+          <button class="secondary small" id="sw-check">Check again</button>
+          <span id="sw-state" class="muted"></span>
+        </div>
+        <div id="sw-kv" class="kv"></div>
+        <div class="actions">
+          <span id="sw-error" class="error"></span>
+          <button class="primary" id="sw-update" hidden>Update now</button>
+        </div>
+        <details id="sw-log-details" hidden>
+          <summary>Update log</summary>
+          <pre id="sw-log" class="log"></pre>
+        </details>
+      </section>
+
+      <section class="card">
+        <h2>OCI Migration Tool VM</h2>
+        <div id="setup-kv" class="kv"></div>
+        <hr class="sep">
+        <div class="toolbar">
+          <h3>Resource usage</h3>
+          <span id="stats-note" class="muted"></span>
+        </div>
+        <div id="stats-kv" class="kv"></div>
+        <!-- live chart: CPU utilisation (top) and network throughput (bottom) over the last 10 minutes -->
+        <div class="chart-wrap">
+          <canvas id="stats-chart" height="220" aria-label="CPU and network usage over the last 10 minutes" role="img"></canvas>
+          <div class="chart-legend muted">
+            <span><i class="swatch cpu"></i> CPU %</span>
+            <span><i class="swatch rx"></i> received</span>
+            <span><i class="swatch tx"></i> sent</span>
+            <span id="stats-chart-range"></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Operation</h2>
+        <form id="op-form" class="form" autocomplete="off">
+          <label>Concurrent migrations
+            <input name="max_concurrent_jobs" type="number" min="1" step="1" required>
+            <small id="op-concurrency-hint">Migrations copying disks at the same time; further jobs wait in the queue.
+              Lowering it never interrupts a running migration.</small>
+          </label>
+          <label>Session idle timeout (hours)
+            <input name="session_ttl_h" type="number" min="0.1" step="0.1" required>
+            <small id="op-ttl-hint">A login ends after this much inactivity in the web UI. Applies to current logins
+              as well; the vCenter connection of a running migration stays open until the job finishes.</small>
+          </label>
+          <div class="actions">
+            <span id="op-result" class="muted"></span>
+            <button type="submit" class="primary" id="op-save">Save</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Web UI password</h2>
+        <p class="muted" id="pw-status"></p>
+        <form id="pw-form" class="form" autocomplete="off">
+          <label id="pw-current-wrap" hidden>Current password
+            <input name="current_password" type="password" autocomplete="current-password">
+          </label>
+          <label>New password
+            <input name="new_password" type="password" minlength="8" autocomplete="new-password">
+            <small>At least 8 characters. Leave empty and enter the current password to turn protection off.</small>
+          </label>
+          <label>Confirm new password
+            <input name="new_password2" type="password" minlength="8" autocomplete="new-password">
+          </label>
+          <div class="actions">
+            <span id="pw-result" class="muted"></span>
+            <button type="submit" class="primary" id="pw-save">Save</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Logging</h2>
+        <form id="log-form" class="form" autocomplete="off">
+          <label>Log level
+            <select name="log_level"></select>
+            <small>Level of the Migration Tool's own messages in the service journal.</small>
+          </label>
+          <label class="check"><input type="checkbox" name="oci_log_requests"> Log OCI API requests and responses</label>
+          <small>Dumps every OCI SDK call including headers and bodies. Very verbose; use it to analyse
+            <em>InvalidParameter</em> and similar errors, then switch it off again.</small>
+          <div class="actions">
+            <span id="log-result" class="muted"></span>
+            <button type="submit" class="primary" id="log-save">Save</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Maintenance</h2>
+        <p class="muted">Seed images are tiny placeholder images used to launch the target instances. They can be
+          removed at any time; the next migration recreates them.</p>
+        <div class="actions">
+          <span id="seed-result" class="muted"></span>
+          <button class="secondary" id="seed-cleanup">Delete seed images</button>
+        </div>
+        <hr class="sep">
+        <p class="muted">ISO images are the custom images imported from installer ISOs (<em>Create OCI instance based on ISO</em>).
+          They are kept for reuse; deleting them only means the next instance from the same ISO imports it again.
+          Instances already launched keep working.</p>
+        <div class="actions">
+          <span id="iso-images-result" class="muted"></span>
+          <button class="secondary" id="iso-images-cleanup">Delete ISO images</button>
+        </div>
+        <hr class="sep">
+        <p class="muted">Job history: removes finished job records from the migration tool's database (the <em>Jobs</em> page).
+          Running or queued jobs are kept. Only the records are deleted - OCI resources a failed job left behind
+          (instance, volumes) are not touched; open the job and use <em>Clean up OCI resources</em> for that first.</p>
+        <div class="actions">
+          <span id="jobs-purge-result" class="muted"></span>
+          <button class="secondary" id="jobs-purge-failed">Delete failed jobs</button>
+          <button class="secondary danger" id="jobs-purge-all">Delete all jobs</button>
+        </div>
+      </section>
+    </div>
+  </template>
+
+  <!-- ------------------------------------------------------------------ job view -->
+  <template id="tpl-job">
+    <div class="job">
+      <div class="job-head">
+        <span class="phase" data-phase></span>
+        <span class="msg" data-message></span>
+      </div>
+      <div class="job-sections">
+        <section class="job-section">
+          <h3>Target instance</h3>
+          <div class="kv" data-target></div>
+          <div class="actions">
+            <a class="button secondary" data-console hidden title="Open the VNC console of the migrated instance in the browser (OCI instance console connection through the migration tool VM)">Remote console</a>
+          </div>
+        </section>
+        <section class="job-section">
+          <h3 data-job-title>Migration</h3>
+          <div class="callout important" data-install-note hidden>
+            <strong>Installation in progress.</strong> The instance boots the installer from the ISO. Open the
+            <em>Remote console</em>, install the operating system onto the boot volume and reboot; the instance then
+            boots from the boot volume. When the installation is complete, click <em>Installation finished</em>.
+          </div>
+          <div class="transfer muted" data-transfer hidden></div>
+          <div class="disks" data-disks></div>
+          <div class="kv" data-migration></div>
+          <div class="actions">
+            <span class="error" data-error></span>
+            <span class="muted" data-copy-state></span>
+            <button class="secondary" data-copy title="Copy the job record, error and relevant migration tool log lines to the clipboard">Copy diagnostics</button>
+            <button class="secondary" data-save-diagnostics title="Download the same diagnostics bundle as a text file">Save diagnostics</button>
+            <button data-resume hidden title="All disks were copied; retry attaching the volumes and starting the instance">Retry finalize</button>
+            <button class="primary" data-finish hidden title="The OS is installed: complete the job (the instance stays)">Installation finished</button>
+            <button class="secondary" data-cancel>Cancel</button>
+          </div>
+        </section>
+      </div>
+      <details data-diag hidden>
+        <summary>Diagnostics text (select all and copy if the clipboard is not available)</summary>
+        <textarea class="diag" readonly rows="16"></textarea>
+      </details>
+    </div>
+  </template>
+
+  <!-- ------------------------------------------------------------------ remote console -->
+  <template id="tpl-console">
+    <section class="card console">
+      <div class="toolbar">
+        <h2>Remote console <span class="muted" id="console-title"></span></h2>
+        <span id="console-status" class="muted">Preparing...</span>
+        <span class="spacer"></span>
+        <button class="secondary small" id="console-cad" disabled title="Send Ctrl+Alt+Del to the instance">Ctrl+Alt+Del</button>
+        <button class="secondary small" id="console-enter" disabled title="Send Enter to the instance">Enter</button>
+        <select class="filter small" id="console-fkey" disabled title="Send a function key to the instance (F1 to F12)">
+          <option value="">Send F-key...</option>
+        </select>
+        <button class="secondary small" id="console-reconnect" disabled>Reconnect</button>
+        <button class="secondary small" id="console-close" title="Disconnect and delete the OCI console connection">Close console</button>
+        <a id="console-back" class="muted" href="#/jobs">&larr; job</a>
+      </div>
+      <p class="muted console-hint">The screen is the OCI instance console (VNC) of the instance, tunnelled through the migration tool VM.
+        Click into the screen to type. The console connection is deleted when you close it or after it has been idle for a while.</p>
+      <div id="console-error" class="error"></div>
+      <div id="vnc-screen" class="vnc-screen"></div>
+    </section>
+  </template>
+
+  <!-- opened by the (i) next to an "encrypted" badge: what to do in vCenter before such a VM can be exported -->
+  <dialog id="gcp-auth-help" class="help help-wide">
+    <h2>Google Cloud authentication for the migration tool</h2>
+    <p>The UI uses a <strong>service account JSON key</strong> (not your user account). The key is sent to the migration
+      tool VM over HTTPS and kept in memory for the session. Disk exports are written to the <strong>GCS bucket</strong>
+      you name at login; the tool deletes those objects when the job ends.</p>
+    <p><strong>Minimum IAM:</strong> on VM projects — Compute Instance Admin (stop/list) or custom roles with
+      <code>compute.instances.list/get/stop</code>, <code>compute.disks.get</code>,
+      <code>compute.snapshots.create/delete</code>, and snapshot export to Cloud Storage; on the export bucket —
+      <code>storage.objects.create/get/delete/list</code> on the export bucket (e.g.
+      <strong>Storage Object Admin</strong> on <code>gs://your-bucket/</code>; bucket metadata read is optional).</p>
+    <p class="muted"><strong>Before you run anything:</strong> set <code>PROJECT_ID</code> to the project that owns your VMs
+      (Cloud Shell shows it in the prompt, e.g. <code>my-gcp-project</code>). The placeholder
+      <code>my-gcp-project</code> is not a real project. That project must have an <strong>active billing account</strong>
+      (otherwise bucket creation fails with <code>billing account … disabled</code>). You need permission to create service
+      accounts (<code>iam.serviceAccounts.create</code>) — typically <strong>Owner</strong> or <strong>IAM Admin</strong>
+      on that project.</p>
+    <p class="muted">Bucket names are <strong>globally unique</strong> (e.g. <code>oci-migration-bucket</code> is often
+      taken — include your project id). If IAM says the service account “does not exist” right after create, wait a few
+      seconds and run the role bindings again (the script below does that).</p>
+    <p class="muted">Edit the variables below, then copy the commands to your shell (<code>gcloud auth login</code> as that
+      user).</p>
+    <textarea class="log azure-cli-edit" id="gcp-auth-help-cli" rows="32" spellcheck="false"
+              aria-label="gcloud setup commands"># --- variables (edit these first) ---
+PROJECT_ID="my-gcp-project"
+# Must be globally unique — include your project id (do not use oci-migration-bucket)
+EXPORT_BUCKET="my-gcp-project-oci-umt-exports"
+REGION="europe-west3"
+SA_NAME="oci-umt-migration"
+SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+
+gcloud config set project "$PROJECT_ID"
+
+gcloud services enable compute.googleapis.com cloudbuild.googleapis.com storage.googleapis.com
+
+# 1) Service account (skip if you already created oci-umt-migration)
+if ! gcloud iam service-accounts describe "$SA_EMAIL" --project="$PROJECT_ID" >/dev/null 2>&1; then
+  gcloud iam service-accounts create "$SA_NAME" --project="$PROJECT_ID" --display-name="OCI UMT migration"
+  echo "Waiting for service account to propagate..."
+  sleep 15
+fi
+
+# 2) Project roles (safe to re-run; retries if IAM has not seen the SA yet)
+bind_role() {
+  local role="$1"
+  for try in 1 2 3 4 5; do
+    gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+      --member="serviceAccount:${SA_EMAIL}" --role="$role" && return 0
+    echo "Retry $try/5 for $role in 10s..."
+    sleep 10
+  done
+  return 1
+}
+bind_role "roles/compute.viewer"
+bind_role "roles/compute.instanceAdmin.v1"
+bind_role "roles/compute.storageAdmin"
+bind_role "roles/cloudbuild.builds.editor"
+
+# 3) Export bucket in YOUR project (skip if it already exists)
+if ! gcloud storage buckets describe "gs://${EXPORT_BUCKET}" --project="$PROJECT_ID" >/dev/null 2>&1; then
+  gcloud storage buckets create "gs://${EXPORT_BUCKET}" --project="$PROJECT_ID" --location="${REGION}" \
+    --uniform-bucket-level-access
+fi
+gcloud storage buckets add-iam-policy-binding "gs://${EXPORT_BUCKET}" \
+  --member="serviceAccount:${SA_EMAIL}" --role="roles/storage.objectAdmin"
+
+# Export runs in Cloud Build using the project default Compute Engine service account
+PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+DEFAULT_COMPUTE_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+gcloud storage buckets add-iam-policy-binding "gs://${EXPORT_BUCKET}" \
+  --member="serviceAccount:${DEFAULT_COMPUTE_SA}" --role="roles/storage.objectAdmin"
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${DEFAULT_COMPUTE_SA}" --role="roles/compute.storageAdmin"
+# Cloud Build runs as the default Compute SA; migration SA must be allowed to use it
+gcloud iam service-accounts add-iam-policy-binding "${DEFAULT_COMPUTE_SA}" \
+  --member="serviceAccount:${SA_EMAIL}" --role="roles/iam.serviceAccountUser"
+
+# 4) JSON key (skip if oci-umt-key.json already exists from a prior run)
+if [ ! -f oci-umt-key.json ]; then
+  gcloud iam service-accounts keys create oci-umt-key.json --iam-account="$SA_EMAIL" --project="$PROJECT_ID"
+fi
+echo "Migration tool login: bucket = ${EXPORT_BUCKET} ; paste contents of oci-umt-key.json"</textarea>
+    <p class="muted" id="gcp-auth-help-copy-state"></p>
+    <div class="actions">
+      <button type="button" class="primary" id="gcp-auth-help-copy">Copy commands to clipboard</button>
+      <button type="button" class="secondary" id="gcp-auth-help-close">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="aws-auth-help" class="help help-wide">
+    <h2>AWS authentication for the migration tool</h2>
+    <p>The UI does <strong>not</strong> use your personal AWS console login. You log in with an
+      <strong>IAM user access key</strong> (access key ID, secret, and the EC2 region). The browser sends them
+      to the Migration Tool VM over HTTPS; the Migration Tool signs EC2, EBS and STS requests on your behalf. Credentials
+      stay in memory for the session only (the secret is never stored on disk; access key ID and region may be
+      remembered in this browser).</p>
+    <p><strong>You need:</strong></p>
+    <ul>
+      <li>Permission to <strong>list and stop</strong> instances and to <strong>create, read and delete</strong>
+        EBS snapshots (plus EBS Direct <code>ListSnapshotBlocks</code> / <code>GetSnapshotBlock</code>).</li>
+      <li>Outbound HTTPS from the migration tool VM to
+        <code>sts.&lt;region&gt;.amazonaws.com</code>, <code>ec2.&lt;region&gt;.amazonaws.com</code> and
+        <code>ebs.&lt;region&gt;.amazonaws.com</code>.</li>
+    </ul>
+    <p class="muted">Edit the variables, then copy the commands into a shell with AWS CLI configured as an admin.</p>
+    <textarea class="log azure-cli-edit" id="aws-auth-help-cli" rows="22" spellcheck="false" aria-label="AWS CLI setup commands"># --- variables (edit these) ---
+USER_NAME="oci-umt-migration"
+POLICY_NAME="OciUmtEc2Export"
+
+# 1) IAM user + access key — copy AccessKeyId and SecretAccessKey into the login form
+aws iam create-user --user-name "$USER_NAME"
+aws iam create-access-key --user-name "$USER_NAME"
+
+# 2) Inline policy
+cat > /tmp/oci-umt-aws.json <<'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeSnapshots",
+        "ec2:DescribeInstanceTypes",
+        "ec2:DescribeImages",
+        "ec2:StopInstances",
+        "ec2:CreateSnapshot",
+        "ec2:DeleteSnapshot",
+        "ec2:CreateTags",
+        "ebs:ListSnapshotBlocks",
+        "ebs:GetSnapshotBlock"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["kms:Decrypt", "kms:DescribeKey", "kms:CreateGrant"],
+      "Resource": "*"
+    }
+  ]
+}
+EOF
+aws iam put-user-policy --user-name "$USER_NAME" --policy-name "$POLICY_NAME" --policy-document file:///tmp/oci-umt-aws.json</textarea>
+    <p class="muted" id="aws-auth-help-copy-state"></p>
+    <div class="actions">
+      <button type="button" class="primary" id="aws-auth-help-copy">Copy commands to clipboard</button>
+      <button type="button" class="secondary" id="aws-auth-help-close">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="azure-auth-help" class="help help-wide">
+    <h2>Azure authentication for the migration tool</h2>
+    <p>The UI does <strong>not</strong> use your personal Microsoft account. You log in with a
+      <strong>service principal</strong> (an Entra ID app registration plus a client secret). The browser sends
+      tenant ID, client ID and secret to the Migration Tool VM over HTTPS; the Migration Tool exchanges them for a
+      short-lived OAuth token against <code>login.microsoftonline.com</code> and calls Azure Resource Manager
+      on your behalf. Credentials stay in memory for the session only (the secret is never stored on disk;
+      tenant and client ID may be remembered in this browser).</p>
+    <p><strong>You need:</strong></p>
+    <ul>
+      <li><strong>Reader</strong> on each subscription that holds VMs (list VMs, disks and sizes).</li>
+      <li>Permission to <strong>deallocate</strong> VMs and to grant <strong>read SAS</strong> on managed disks
+        (and create/delete snapshots if you use snapshot capture mode).</li>
+      <li>Outbound HTTPS from the migration tool VM to
+        <code>login.microsoftonline.com</code>, <code>management.azure.com</code>, and Azure blob endpoints
+        (<code>*.blob.core.windows.net</code>, <code>*.blob.storage.azure.net</code>).</li>
+    </ul>
+    <p class="muted">Edit the variables in the box below, then use <strong>Copy commands to clipboard</strong> or run
+      them in Azure CLI (<code>az login</code> as a user who can create app registrations and role assignments). Copy
+      the <strong>password</strong> from the secret step into the login form; it is shown only once. The default client
+      secret lifetime is <strong>6 months</strong> (<code>SECRET_MONTHS</code>).</p>
+    <textarea class="log azure-cli-edit" id="azure-auth-help-cli" rows="22" spellcheck="false" aria-label="Azure CLI setup commands"># --- variables (edit these) ---
+SUBSCRIPTION_ID="00000000-0000-0000-0000-000000000000"
+APP_NAME="oci-umt-migration"
+ROLE_NAME="OCI Ultimate Migration Tool Disk Export"
+SECRET_MONTHS=6
+# Subscription scope, or a resource group:
+# ASSIGNMENT_SCOPE="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/my-rg"
+ASSIGNMENT_SCOPE="/subscriptions/${SUBSCRIPTION_ID}"
+
+TENANT_ID=$(az account show --query tenantId -o tsv)
+
+# 1) App registration + service principal
+az ad app create --display-name "$APP_NAME"
+APP_ID=$(az ad app list --display-name "$APP_NAME" --query "[0].appId" -o tsv)
+az ad sp create --id "$APP_ID"
+
+# 2) Client secret — copy "password" into the migration tool Azure login (shown once)
+END_DATE=$(date -u -d "+${SECRET_MONTHS} months" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v+${SECRET_MONTHS}m +%Y-%m-%dT%H:%M:%SZ)
+az ad app credential reset --id "$APP_ID" --display-name oci-umt --end-date "$END_DATE"
+
+# 3) Custom role (save as oci-umt-role.json; set AssignableScopes to your subscription id)
+# {
+#   "Name": "OCI Ultimate Migration Tool Disk Export",
+#   "IsCustom": true,
+#   "Description": "Deallocate VMs and grant disk export SAS for Azure-to-OCI migration",
+#   "Actions": [
+#     "Microsoft.Compute/virtualMachines/deallocate/action",
+#     "Microsoft.Compute/disks/beginGetAccess/action",
+#     "Microsoft.Compute/disks/endGetAccess/action",
+#     "Microsoft.Compute/snapshots/write",
+#     "Microsoft.Compute/snapshots/delete",
+#     "Microsoft.Compute/snapshots/beginGetAccess/action",
+#     "Microsoft.Compute/snapshots/endGetAccess/action"
+#   ],
+#   "AssignableScopes": ["/subscriptions/00000000-0000-0000-0000-000000000000"]
+# }
+az role definition create --role-definition oci-umt-role.json
+
+az role assignment create --assignee "$APP_ID" --role "Reader" --scope "$ASSIGNMENT_SCOPE"
+az role assignment create --assignee "$APP_ID" --role "$ROLE_NAME" --scope "$ASSIGNMENT_SCOPE"
+
+echo "Tenant ID: $TENANT_ID"
+echo "Client ID: $APP_ID"</textarea>
+    <p class="muted" id="azure-auth-help-copy-state"></p>
+    <p class="muted">Instead of the custom role you can assign built-in roles:
+      <strong>Virtual Machine Contributor</strong> (deallocate),
+      <strong>Disk Snapshot Contributor</strong> (snapshots and <code>beginGetAccess</code>),
+      and <strong>Disk Restore Operator</strong> (<code>endGetAccess</code> on disks).</p>
+    <div class="actions">
+      <button type="button" class="primary" id="azure-auth-help-copy">Copy commands to clipboard</button>
+      <button type="button" class="secondary" id="azure-auth-help-close">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="encrypted-help" class="help">
+    <h2>Encrypted VM: <span id="encrypted-help-name"></span></h2>
+    <p>vSphere does not allow exporting an encrypted VM (<code>The operation is not supported on encrypted VM</code>),
+      and the migration tool needs that export to read the disks. A <strong>Virtual TPM</strong> device can only exist on an
+      encrypted VM, which is why Windows 11 VMs are usually encrypted. Decrypt the VM in vCenter first, the VM's data is
+      not touched:</p>
+    <ol>
+      <li id="encrypted-help-bitlocker">If BitLocker is enabled in Windows, <strong>suspend it</strong> first
+        (<code>manage-bde -protectors -disable C: -RebootCount 0</code>, or <em>Control Panel &gt; BitLocker &gt; Suspend
+        protection</em>). The OCI instance gets a different TPM anyway, so BitLocker would otherwise ask for the recovery
+        key after the migration.</li>
+      <li><strong>Power the VM off</strong> in vCenter.</li>
+      <li id="encrypted-help-vtpm"><em>Edit Settings &gt; Virtual Hardware</em>: <strong>remove the Virtual TPM device</strong>
+        (Windows 11 keeps booting without it once installed).</li>
+      <li id="encrypted-help-vm"><em>Edit Settings &gt; VM Options &gt; Encryption</em>: set <strong>Encrypt VM</strong> to
+        <strong>None</strong>. If the option is greyed out, the vTPM is still present or the account lacks the
+        <em>Cryptographic operations &gt; Decrypt</em> privilege.</li>
+      <li id="encrypted-help-disks">For an encrypted virtual disk: <em>Edit Settings &gt; VM Options &gt; Encryption</em> lists
+        the disks; pick a <strong>VM storage policy without encryption</strong> for each of them (or change the disk's
+        policy under <em>Virtual Hardware &gt; Hard disk &gt; VM storage policy</em>).</li>
+      <li>Back in the migration tool, click <em>Refresh</em> in the Source VMs list and start the migration. The OCI instance is
+        still launched as a shielded instance with Secure Boot and a vTPM when the source used Secure Boot.</li>
+    </ol>
+    <p class="muted">Optional afterwards: re-encrypt the source VM in vCenter, or keep it as it is for a rollback.</p>
+    <div class="actions"><button class="secondary" id="encrypted-help-close">Close</button></div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

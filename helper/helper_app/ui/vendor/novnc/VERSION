@@ -1,0 +1,4 @@
+noVNC v1.7.0 - https://github.com/novnc/noVNC
+Vendored: core/ (MPL-2.0, see LICENSE.txt, docs/LICENSE.MPL-2.0 and AUTHORS) and vendor/pako/ (MIT, see vendor/pako/LICENSE).
+Repository-level notice: THIRD_PARTY_LICENSES.txt in the repository root.
+Only the RFB client library is used (core/rfb.js, loaded as an ES module by ../../app.js); the noVNC UI (app/, vnc.html) is not shipped.
