@@ -26,7 +26,7 @@ Workstation/Fusion, Hyper-V and KVM sources are not supported. See [docs/limitat
 
 ## Quick start
 
-[![Deploy to Oracle Cloud](https://oci-resourcemanager-plugin.plugins.oci.oraclecloud.com/latest/deploy-to-oracle-cloud.svg)](https://cloud.oracle.com/resourcemanager/stacks/create?zipUrl=https://github.com/RichardORCL/OCI-UltimateMigrationTool/raw/3545ca652af61677fcd296e2512ead0729db2026/oci-ultimate-migration-tool-stack.zip)
+[![Deploy to Oracle Cloud](https://oci-resourcemanager-plugin.plugins.oci.oraclecloud.com/latest/deploy-to-oracle-cloud.svg)](https://cloud.oracle.com/resourcemanager/stacks/create?zipUrl=https://github.com/RichardORCL/OCI-UltimateMigrationTool/raw/12e1afb0165acf9497d06b8d899652906a488695/oci-ultimate-migration-tool-stack.zip)
 
 The button uses a verified stack revision. If an already-open Create stack page shows an older
 description, close it and open the button again. Existing stacks retain their saved configuration.
