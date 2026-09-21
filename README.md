@@ -19,18 +19,7 @@ the original disks, firmware settings and sizing.
 - **OCI Remote Console** - open the VNC console of any compute instance in your browser
 - **Export from OCI to OVA/OVF** - turn an OCI instance into an OVA/OVF package in Object Storage
 
-## What you can use it for
-
-- **Lift-and-shift** of Linux and Windows VMs, single or multi-disk, BIOS or UEFI, with Secure Boot where the
-  source used it.
-- **Several sources with one tool VM**: the vCenter/ESXi address, Azure service principal, AWS access key or
-  Google service account are entered at login; nothing about the sources is configured in the deployment.
-- **Short downtime**: the source VM is only stopped right before its disks are copied, after you confirm.
-  Azure, AWS and Google VMs can also be copied from snapshots while they keep running.
-- **Batch migrations**: run several migrations in parallel, queue more, and see progress, throughput and
-  diagnostics per job.
-- **First-boot troubleshooting**: open the remote console of a migrated instance directly from its job.
-- **Bare metal and Arm**: the ISO installer supports x86 and Ampere A1/A2/A4 shapes, virtual machine or bare metal.
+![Start page of the OCI Ultimate Migration Tool](docs/Screenshot.png)
 
 Not in scope: live migration with delta sync, VMware Workstation/Fusion, Hyper-V or KVM sources, and
 guest-side reconfiguration (IP addresses, drivers). See [docs/limitations.md](docs/limitations.md).
