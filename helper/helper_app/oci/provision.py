@@ -44,6 +44,7 @@ from helper_app.models import (
     OvaExportSpec,
     WindowsLicenseType,
 )
+from helper_app.oci.cleanup import cleanup_resources
 from helper_app.oci.clients import OciClients, OciError
 from helper_app.oci.image_import import ensure_shape_compatible
 from helper_app.oci.launch import free_hostname_label, secure_boot_platform_config
@@ -1039,41 +1040,8 @@ class Provisioner:
 
     # ------------------------------------------------------------------ cleanup
     def cleanup(self, job: Job) -> list[str]:
-        """Best-effort teardown of everything this job created.  Returns a list of actions."""
-        actions: list[str] = []
+        return cleanup_resources(self, job)
 
-        def attempt(desc: str, fn: Callable[[], Any]) -> None:
-            try:
-                fn()
-                actions.append(f"ok: {desc}")
-            except Exception as exc:  # noqa: BLE001
-                actions.append(f"failed: {desc}: {exc}")
-
-        try:
-            self._detach_all_from_helper(job)
-        except Exception as exc:  # noqa: BLE001
-            actions.append(f"failed: detach from the migration tool VM: {exc}")
-        # data volumes attached to the target in prepare(): release them first, otherwise deleting the volume
-        # races the detach that terminating the instance triggers
-        for disk in job.disks[1:]:
-            if disk.target_attachment_id:
-                attempt(f"detach disk {disk.index} from target",
-                        lambda d=disk: self._detach_from_target(d))
-        if job.instance_id:
-            attempt(f"terminate instance {job.instance_id}",
-                    lambda: self.c.compute.terminate_instance(job.instance_id, preserve_boot_volume=False))
-        for disk in job.disks:
-            if disk.volume_id and disk.is_boot:
-                attempt(f"delete boot volume {disk.volume_id}",
-                        lambda vid=disk.volume_id: self.c.blockstorage.delete_boot_volume(vid))
-            elif disk.volume_id:
-                attempt(f"delete volume {disk.volume_id}",
-                        lambda vid=disk.volume_id: self.c.blockstorage.delete_volume(vid))
-        job.phase = JobPhase.CANCELLED
-        job.step = "cancelled"
-        job.message = "; ".join(actions) or "nothing to clean up"
-        self.save(job)
-        return actions
 
 
 TAG_VALUE_MAX = 256  # OCI freeform tag values are limited to 256 characters (keys to 100)

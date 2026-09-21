@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from helper_app.guest.azure_cloud import AzureCloudFixer, CLOUD_CFG_DROPIN
+from helper_app.guest.azure_cloud import CLOUD_CFG_DROPIN, AzureCloudFixer
 
 
 def _layout(root: Path) -> None:

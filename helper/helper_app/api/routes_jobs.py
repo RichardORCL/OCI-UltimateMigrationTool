@@ -565,19 +565,19 @@ async def job_diagnostics(job_id: str, request: Request):
 def cancel_job(job_id: str, request: Request, session: UserSession = Depends(require_session)):
     st = request.app.state
     job = _get_job(request, job_id)
-    if job.phase in (JobPhase.COMPLETED, JobPhase.CANCELLED):
+    if job.phase == JobPhase.COMPLETED:
         raise HTTPException(status.HTTP_409_CONFLICT, f"job is already {job.phase.value}")
     if st.runner.is_running(job.id):
         st.runner.request_cancel(job.id)
         job.message = "Cancellation requested"
         st.store.put(job)
         return job
-    # not running (failed or interrupted by a restart): tear down whatever was created.  An Azure job may
-    # still hold export SAS / snapshots; the caller's Azure login (if any) is used to release them.
+    # Cleanup is retryable after cancellation, including after a source login or partial deletion failure.
+    # Only use credentials for the job's source provider.
     job.step = "cancel_queued"
     job.message = "Cleaning up OCI resources"
     st.store.put(job)
-    cloud = session if (session.azure is not None or session.gcp is not None) else None
+    cloud = session if session.cloud_backend(job.kind) is not None else None
     st.runner.cleanup(job.id, cloud)
     return job
 

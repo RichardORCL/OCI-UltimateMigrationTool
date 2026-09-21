@@ -3,31 +3,21 @@
 from __future__ import annotations
 
 import asyncio
-import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from helper_app.api.inventory_helpers import cached_inventory, guest_mapping
 from helper_app.auth import require_gcp_session
 from helper_app.gcp.client import GcpAuthError, GcpError
 from helper_app.gcp.inventory import GcpVmDetails, inspect_vm, list_vm_summaries
 from helper_app.gcp.preflight import preflight, warnings
-from helper_app.models import GcpCaptureMode, GuestOsMapping, VmInspection, VmSummary
-from helper_app.oci.mapping import map_guest_os, os_version_choices
+from helper_app.models import GcpCaptureMode, VmInspection, VmSummary
 from helper_app.sessions import UserSession
 
 router = APIRouter(prefix="/api/gcp", tags=["gcp"])
 
-VM_LIST_CACHE_S = 30.0
-
-
 def _list_cached(session: UserSession, refresh: bool) -> list[VmSummary]:
-    cache = session.cache.get("gcp_vms")
-    now = time.monotonic()
-    if not refresh and cache and now - cache[0] < VM_LIST_CACHE_S:
-        return cache[1]
-    vms = list_vm_summaries(session.gcp)
-    session.cache["gcp_vms"] = (now, vms)
-    return vms
+    return cached_inventory(session, "gcp_vms", refresh, lambda: list_vm_summaries(session.gcp))
 
 
 @router.get("/vms", response_model=list[VmSummary])
@@ -59,7 +49,6 @@ def inspect(session: UserSession, vm_id: str, capture_mode: GcpCaptureMode = "st
     details = details or inspect_details(session, vm_id)
     problems = preflight(details, capture_mode)
     spec = details.spec
-    os_meta = map_guest_os(spec.guest_id, spec.guest_full_name)
     return VmInspection(
         vm=spec,
         can_export=not problems,
@@ -67,12 +56,7 @@ def inspect(session: UserSession, vm_id: str, capture_mode: GcpCaptureMode = "st
         warnings=warnings(details, capture_mode),
         needs_power_off=(capture_mode == "stop" and spec.power_state != "poweredOff"),
         tools_running=False,
-        os=GuestOsMapping(
-            operating_system=os_meta.operating_system,
-            operating_system_version=os_meta.operating_system_version,
-            version_detected=os_meta.version_detected,
-            version_choices=os_version_choices(os_meta),
-        ),
+        os=guest_mapping(spec),
     )
 
 

@@ -16,6 +16,7 @@ from helper_app import __version__
 from helper_app.config import Settings
 from helper_app.models import Job
 from helper_app.oci.clients import HelperIdentity
+from helper_app.redaction import redact
 from helper_app.updater import Runner, _default_runner
 
 JOURNAL_MAX_LINES = 400
@@ -208,4 +209,4 @@ def collect(job: Job, settings: Settings, ident: HelperIdentity, commit: str,
         f"--- migration tool journal ({settings.update_service}) ---",
         journal_excerpt(job, settings.update_service, run),
     ]
-    return "\n".join(header) + "\n"
+    return redact("\n".join(header) + "\n")

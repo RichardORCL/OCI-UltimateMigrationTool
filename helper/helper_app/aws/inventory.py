@@ -53,8 +53,7 @@ def _as_list(value: Any) -> list:
 
 def _tag_name(inst: dict) -> str:
     tags = inst.get("tagSet") or inst.get("tags")
-    rows = tags if isinstance(tags, list) else _as_list(
-        (tags or {}).get("item") if isinstance(tags, dict) else tags)
+    rows = tags if isinstance(tags, list) else _as_list((tags or {}).get("item") if isinstance(tags, dict) else tags)
     for tag in rows:
         if isinstance(tag, dict) and str(tag.get("key") or tag.get("Key") or "") == "Name":
             return str(tag.get("value") or tag.get("Value") or "")
@@ -63,25 +62,29 @@ def _tag_name(inst: dict) -> str:
 
 def _block_devices(inst: dict) -> list[dict]:
     mapping = inst.get("blockDeviceMapping")
-    rows = mapping if isinstance(mapping, list) else _as_list(
-        (mapping or {}).get("item") if isinstance(mapping, dict) else mapping)
+    rows = (
+        mapping
+        if isinstance(mapping, list)
+        else _as_list((mapping or {}).get("item") if isinstance(mapping, dict) else mapping)
+    )
     out = []
     for row in rows:
         if not isinstance(row, dict):
             continue
         ebs = row.get("ebs") if isinstance(row.get("ebs"), dict) else {}
-        out.append({
-            "device": str(row.get("deviceName") or row.get("device") or ""),
-            "volume_id": str(ebs.get("volumeId") or row.get("volumeId") or ""),
-            "status": str(ebs.get("status") or ""),
-        })
+        out.append(
+            {
+                "device": str(row.get("deviceName") or row.get("device") or ""),
+                "volume_id": str(ebs.get("volumeId") or row.get("volumeId") or ""),
+                "status": str(ebs.get("status") or ""),
+            }
+        )
     return [d for d in out if d["volume_id"]]
 
 
 def _product_codes(inst: dict) -> list[str]:
     raw = inst.get("productCodes") or inst.get("productCodesSet")
-    rows = raw if isinstance(raw, list) else _as_list(
-        (raw or {}).get("item") if isinstance(raw, dict) else raw)
+    rows = raw if isinstance(raw, list) else _as_list((raw or {}).get("item") if isinstance(raw, dict) else raw)
     codes = []
     for row in rows:
         if isinstance(row, dict):
@@ -108,7 +111,11 @@ def guess_guest_os(inst: dict, image: Optional[dict] = None) -> tuple[str, str]:
 
     if platform == "windows" or "windows" in blob:
         client_text = f"{name} {desc} {details}"
-        if re.search(r"win(dows)?[-_ ]?1[01]\b", client_text) or "windows 10" in client_text or "windows 11" in client_text:
+        if (
+            re.search(r"win(dows)?[-_ ]?1[01]\b", client_text)
+            or "windows 10" in client_text
+            or "windows 11" in client_text
+        ):
             rel = "11" if "11" in client_text else "10"
             return f"windows{rel}_64Guest", f"Microsoft Windows {rel}"
         m = re.search(r"(20\d\d)", client_text)
@@ -167,8 +174,9 @@ def _vcpu_memory(inst_type: dict) -> tuple[int, int]:
     return max(cores, 1), max(memory_mb, 1024)
 
 
-def vm_spec_from_aws(inst: dict, volumes: dict[str, dict], inst_type: dict, image: Optional[dict],
-                     region: str, account: str) -> VmSpec:
+def vm_spec_from_aws(
+    inst: dict, volumes: dict[str, dict], inst_type: dict, image: Optional[dict], region: str, account: str
+) -> VmSpec:
     instance_id = str(inst.get("instanceId") or "")
     devices = _block_devices(inst)
     root_name = str(inst.get("rootDeviceName") or "")
@@ -178,19 +186,29 @@ def vm_spec_from_aws(inst: dict, volumes: dict[str, dict], inst_type: dict, imag
     for i, dev in enumerate(ordered):
         vol = volumes.get(dev["volume_id"]) or {}
         gb = int(vol.get("size") or 0)
-        disks.append(DiskSpec(
-            index=i, label=dev["device"] or f"vol {i}", device_key=i,
-            capacity_bytes=gb * GIB if gb else 0,
-            controller_type="nvme" if "nvme" in (dev["device"] or "").lower() else "scsi",
-            controller_class="EBS", controller_bus=0, unit_number=i,
-            thin_provisioned=True, backing_file=dev["volume_id"],
-        ))
+        disks.append(
+            DiskSpec(
+                index=i,
+                label=dev["device"] or f"vol {i}",
+                device_key=i,
+                capacity_bytes=gb * GIB if gb else 0,
+                controller_type="nvme" if "nvme" in (dev["device"] or "").lower() else "scsi",
+                controller_class="EBS",
+                controller_bus=0,
+                unit_number=i,
+                thin_provisioned=True,
+                backing_file=dev["volume_id"],
+            )
+        )
     guest_id, full_name = guess_guest_os(inst, image)
-    nics = [NicSpec(label=str(n.get("networkInterfaceId") or n.get("networkInterfaceId") or "eni"),
-                    adapter_type="ena")
-            for n in _as_list((inst.get("networkInterfaceSet") or {}).get("item")
-                              if isinstance(inst.get("networkInterfaceSet"), dict)
-                              else inst.get("networkInterfaceSet"))]
+    nics = [
+        NicSpec(label=str(n.get("networkInterfaceId") or n.get("networkInterfaceId") or "eni"), adapter_type="ena")
+        for n in _as_list(
+            (inst.get("networkInterfaceSet") or {}).get("item")
+            if isinstance(inst.get("networkInterfaceSet"), dict)
+            else inst.get("networkInterfaceSet")
+        )
+    ]
     if not nics and inst.get("vpcId"):
         nics = [NicSpec(label=str(inst.get("vpcId")), adapter_type="ena")]
     cores, memory_mb = _vcpu_memory(inst_type)
@@ -244,9 +262,11 @@ def list_vm_summaries(session: AwsSession) -> list[VmSummary]:
     instances = client.describe_instances()
     image_ids = list({str(i.get("imageId") or "") for i in instances if i.get("imageId")})
     images = client.describe_images(image_ids)
-    rows = [vm_summary_from_aws(inst, images.get(str(inst.get("imageId") or "")),
-                                session.region, session.account_id)
-            for inst in instances if _state_name(inst) != "terminated"]
+    rows = [
+        vm_summary_from_aws(inst, images.get(str(inst.get("imageId") or "")), session.region, session.account_id)
+        for inst in instances
+        if _state_name(inst) != "terminated"
+    ]
     rows.sort(key=lambda r: (r.folder.lower(), r.name.lower()))
     return rows
 

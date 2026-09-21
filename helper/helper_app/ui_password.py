@@ -1,7 +1,7 @@
 """Optional shared UI password: scrypt hash on disk, never plaintext.
 
-The hash file (``HELPER_UI_PASSWORD_HASH_PATH``) is the only persistence.  A missing or empty file
-means the web UI is open (today's anonymous session).  Format::
+The hash file (``HELPER_UI_PASSWORD_HASH_PATH``) is the only persistence.  Only a missing file
+means the web UI is open. Unreadable or empty files fail closed.  Format::
 
     scrypt$n$r$p$<urlsafe-b64-salt>$<urlsafe-b64-dk>
 """
@@ -14,6 +14,7 @@ import hmac
 import logging
 import os
 import secrets
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -89,10 +90,10 @@ class UiPasswordStore:
             self._record = None
             return
         except OSError as exc:
-            log.warning("ignoring unreadable UI password hash %s: %s", self.path, exc)
-            self._record = None
-            return
-        self._record = text or None
+            raise RuntimeError(f"Cannot read UI password hash {self.path}; access remains locked") from exc
+        if not text:
+            raise RuntimeError(f"Empty UI password hash {self.path}; access remains locked")
+        self._record = text
 
     def verify(self, password: str) -> bool:
         if not self._record or not password:
@@ -102,9 +103,16 @@ class UiPasswordStore:
     def set_password(self, password: str) -> None:
         record = hash_password(password)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(record + "\n", encoding="utf-8")
-        if os.name != "nt":
-            os.chmod(self.path, 0o600)
+        # A same-directory temporary file is private from creation and replaced atomically.
+        fd, name = tempfile.mkstemp(prefix=".ui-password-", dir=self.path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(record + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(name, self.path)
+        finally:
+            Path(name).unlink(missing_ok=True)
         self._record = record
         log.warning("UI password hash written to %s", self.path)
 

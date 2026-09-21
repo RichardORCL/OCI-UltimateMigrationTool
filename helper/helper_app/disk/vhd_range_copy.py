@@ -9,44 +9,26 @@ fetched with an HTTP range request and written at the same offset - no format de
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 import httpx
 
 from helper_app.azure.client import AzureClient, AzureError
+from helper_app.disk.copy_common import CopyStats as RangeCopyStats
+from helper_app.disk.copy_common import run_workers
 from helper_app.disk.writer import PositionalWriter
 
 log = logging.getLogger(__name__)
 
-VHD_FOOTER_BYTES = 512
-PAGE_BYTES = 512
 DEFAULT_CHUNK_BYTES = 8 * 1024 * 1024
 DEFAULT_RETRIES = 3
-_HAS_PWRITE = hasattr(os, "pwrite")
 
 
 class VhdCopyError(RuntimeError):
     pass
-
-
-@dataclass
-class RangeCopyStats:
-    bytes_received: int = 0
-    bytes_written: int = 0
-    chunks_written: int = 0  # the "grains" of this format: one per range request
-    retries: int = 0
-    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
-
-    def add(self, n: int) -> None:
-        with self._lock:
-            self.bytes_received += n
-            self.bytes_written += n
-            self.chunks_written += 1
 
 
 # --------------------------------------------------------------------------- page ranges
@@ -150,19 +132,9 @@ def copy_ranges(
     chunks = split_chunks(ranges, chunk_bytes)
     if not chunks:
         return stats
-    queue = list(reversed(chunks))
-    lock = threading.Lock()
-    write_lock = threading.Lock() if not _HAS_PWRITE else None  # lseek+write is not atomic
     stop = threading.Event()
-    failure: list[BaseException] = []
     refresh_lock = threading.Lock()
     refreshed_at = [0.0]
-
-    def fail(exc: BaseException) -> None:
-        with lock:
-            if not failure:
-                failure.append(exc)
-        stop.set()
 
     def refresh_sas() -> None:
         if refresh is None:
@@ -197,33 +169,13 @@ def copy_ranges(
                     sleep(min(10.0, 1.0 * attempt))
         raise VhdCopyError(f"{last}") from last
 
-    def worker() -> None:
-        try:
-            while not stop.is_set():
-                with lock:
-                    if not queue:
-                        return
-                    off, ln = queue.pop()
-                if check_cancel is not None:
-                    check_cancel()
-                data = fetch(off, ln)
-                if write_lock is not None:
-                    with write_lock:
-                        writer.write_at(off, data)
-                else:
-                    writer.write_at(off, data)
-                stats.add(len(data))
-                if on_progress is not None:
-                    on_progress(len(data))
-        except BaseException as exc:  # noqa: BLE001 - reported to the caller
-            fail(exc)
+    def process(bounds: tuple[int, int]) -> None:
+        off, ln = bounds
+        data = fetch(off, ln)
+        writer.write_at(off, data)
+        stats.add(len(data))
+        if on_progress:
+            on_progress(len(data))
 
-    n = max(1, min(int(workers), len(chunks)))
-    threads = [threading.Thread(target=worker, name=f"vhd-copy-{i}", daemon=True) for i in range(n)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-    if failure:
-        raise failure[0]
+    run_workers(chunks, process, workers=min(workers, len(chunks)), check_cancel=check_cancel, stop=stop)
     return stats

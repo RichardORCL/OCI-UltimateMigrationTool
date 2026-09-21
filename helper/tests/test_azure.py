@@ -7,9 +7,8 @@ import os
 import random
 import threading
 
-import pytest
-
 import httpx
+import pytest
 
 from helper_app.azure.client import AzureAuthError, AzureClient, AzureError, _append_sas_query
 from helper_app.azure.export import AzureDiskExport, release_azure_resources, snapshot_name

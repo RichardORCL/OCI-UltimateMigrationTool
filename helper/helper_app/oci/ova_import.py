@@ -8,12 +8,22 @@ from typing import Callable
 from helper_app.branding import TAG_JOB, TAG_SOURCE_DETAILS, TAG_SOURCE_OVA
 from helper_app.config import Settings
 from helper_app.disk.object_vmdk_copy import copy_vmdk_from_ova, copy_vmdk_object
-from helper_app.models import BootVolumeType, DiskState, DiskStatus, Job, JobPhase, LaunchOptionsSpec, NetworkType, OciTarget, OvaSpec
+from helper_app.jobs.store import utcnow
+from helper_app.models import (
+    BootVolumeType,
+    DiskState,
+    DiskStatus,
+    Job,
+    JobPhase,
+    LaunchOptionsSpec,
+    NetworkType,
+    OciTarget,
+    OvaSpec,
+)
 from helper_app.oci.clients import OciClients, OciError
 from helper_app.oci.image_import import ProgressCallback
 from helper_app.oci.mapping import OsMetadata, ShapeConfig, remote_data_volume_type_for, volume_size_gb
 from helper_app.oci.provision import Provisioner
-from helper_app.jobs.store import utcnow
 from helper_app.ova.package import OvaDiskSource, OvaPackageError, parse_ova_layout, staging_namespace
 
 log = logging.getLogger(__name__)
@@ -154,7 +164,7 @@ class OvaImporter:
             if not disk.device:
                 raise OciError(f"disk {disk.index} is not attached to the migration tool VM")
 
-            def prog(recv: int, written: int) -> None:
+            def prog(recv: int, written: int, disk=disk) -> None:
                 disk.bytes_received = recv
                 disk.bytes_written = written
                 total = disk.capacity_bytes or 1
@@ -166,7 +176,7 @@ class OvaImporter:
                 self.save(job)
 
             recv, written = self._copy_vmdk_source(
-                namespace, ova.bucket, src, disk.device, disk.capacity_bytes, prog,
+                namespace, ova.bucket, src, disk.device, disk.capacity_bytes, prog, check_cancel,
             )
             disk.bytes_received = recv
             disk.bytes_written = written
@@ -186,6 +196,7 @@ class OvaImporter:
         device: str,
         capacity_bytes: int,
         on_progress: ProgressCallback | None,
+        check_cancel: Callable[[], None] | None = None,
     ) -> tuple[int, int]:
         if src.bucket_object:
             return copy_vmdk_object(
@@ -197,6 +208,7 @@ class OvaImporter:
                 capacity_bytes,
                 skip_zero_grains=self.s.skip_zero_grains,
                 on_progress=on_progress,
+                check_cancel=check_cancel,
             )
         if src.ova_object:
             return copy_vmdk_from_ova(
@@ -209,6 +221,7 @@ class OvaImporter:
                 capacity_bytes,
                 skip_zero_grains=self.s.skip_zero_grains,
                 on_progress=on_progress,
+                check_cancel=check_cancel,
             )
         raise OciError(f"disk {src.index} has no Object Storage source")
 

@@ -71,7 +71,11 @@ class GcpDiskExport:
         project, zone = self.info.project_id, self.info.zone
         for index, disk_url in enumerate(self.info.disk_urls):
             self._check()
-            snap = self.info.snapshot_names[index] if index < len(self.info.snapshot_names) and self.info.snapshot_names[index] else ""
+            snap = (
+                self.info.snapshot_names[index]
+                if index < len(self.info.snapshot_names) and self.info.snapshot_names[index]
+                else ""
+            )
             if not snap:
                 disk_name = disk_url.rsplit("/disks/", 1)[-1].split("/", 1)[0]
                 snap = snapshot_name(self.job_id, index, disk_name)
@@ -81,10 +85,19 @@ class GcpDiskExport:
                 self._save()
                 log.info("job %s: snapshot %s of %s", self.job_id, snap, disk_name)
                 self.client.create_snapshot(
-                    project, zone, disk_name, snap, self.snapshot_timeout_s,
-                    labels=self.labels, on_wait=self._check,
+                    project,
+                    zone,
+                    disk_name,
+                    snap,
+                    self.snapshot_timeout_s,
+                    labels=self.labels,
+                    on_wait=self._check,
                 )
-            obj = self.info.gcs_objects[index] if index < len(self.info.gcs_objects) and self.info.gcs_objects[index] else ""
+            obj = (
+                self.info.gcs_objects[index]
+                if index < len(self.info.gcs_objects) and self.info.gcs_objects[index]
+                else ""
+            )
             if not obj:
                 obj = object_name(self.info.export_prefix, index)
                 while len(self.info.gcs_objects) <= index:
@@ -93,7 +106,13 @@ class GcpDiskExport:
                 self._save()
                 log.info("job %s: export %s to gs://%s/%s", self.job_id, snap, self.info.export_bucket, obj)
                 self.client.export_snapshot(
-                    project, zone, snap, self.info.export_bucket, obj, self.export_timeout_s, on_wait=self._check,
+                    project,
+                    zone,
+                    snap,
+                    self.info.export_bucket,
+                    obj,
+                    self.export_timeout_s,
+                    on_wait=self._check,
                 )
             self._objects[index] = obj
 

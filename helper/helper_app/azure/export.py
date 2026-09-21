@@ -13,8 +13,8 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
-from helper_app.branding import PREFIX, TAG_JOB
 from helper_app.azure.client import AzureClient, AzureError
+from helper_app.branding import PREFIX, TAG_JOB
 from helper_app.models import AzureSourceInfo
 
 log = logging.getLogger(__name__)

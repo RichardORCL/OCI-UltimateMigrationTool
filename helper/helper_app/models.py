@@ -55,7 +55,7 @@ class NicSpec(BaseModel):
 
 
 class VmSpec(BaseModel):
-    moid: str
+    moid: str  # Stable API field: provider-native VM ID (not only a VMware managed-object ID)
     name: str
     instance_uuid: str = ""
     num_cpu: int
@@ -82,7 +82,7 @@ class VmSpec(BaseModel):
 class VmSummary(BaseModel):
     """One row of the VM list in the web UI."""
 
-    moid: str
+    moid: str  # Stable API field: provider-native VM ID (not only a VMware managed-object ID)
     name: str
     folder: str = ""
     power_state: str = "poweredOff"
@@ -540,7 +540,7 @@ class Job(BaseModel):
     step_percent: Optional[int] = None  # progress of the current step when OCI reports one (work requests)
     message: str = ""
     error: Optional[str] = None
-    vm: Optional[VmSpec] = None  # the source VM (vmware and azure jobs)
+    vm: Optional[VmSpec] = None  # the source VM for VMware, Azure, GCP or AWS jobs
     iso: Optional[IsoSpec] = None  # the installer ISO (iso jobs)
     iso_image_id: Optional[str] = None  # custom image imported from the ISO (iso jobs)
     ova: Optional[OvaSpec] = None  # the OVA object (ova jobs)

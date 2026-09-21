@@ -19,7 +19,6 @@ from helper_app.ui_password import MIN_PASSWORD_LENGTH, mark_prompt_done
 from helper_app.updater import SoftwareStatus, UpdateError
 
 log = logging.getLogger(__name__)
-# the Setup page changes the helper's operation and can update it: vCenter-authenticated users only
 # any UI session: the Setup page (logging, concurrency, software update, image cleanup) needs no vCenter
 router = APIRouter(prefix="/api/setup", tags=["setup"], dependencies=[Depends(require_session)])
 

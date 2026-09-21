@@ -18,8 +18,14 @@ from helper_app.models import DiskSpec, Firmware, NicSpec, VmSpec, VmSummary
 log = logging.getLogger(__name__)
 
 GIB = 1024**3
-POWER_STATES = {"running": "poweredOn", "deallocated": "poweredOff", "stopped": "stopped",
-                "starting": "starting", "stopping": "stopping", "deallocating": "deallocating"}
+POWER_STATES = {
+    "running": "poweredOn",
+    "deallocated": "poweredOff",
+    "stopped": "stopped",
+    "starting": "starting",
+    "stopping": "stopping",
+    "deallocating": "deallocating",
+}
 
 _RESOURCE_ID = re.compile(
     r"^/subscriptions/(?P<sub>[^/]+)/resourceGroups/(?P<rg>[^/]+)/providers/(?P<provider>[^/]+/[^/]+)/(?P<name>[^/]+)$",
@@ -31,8 +37,12 @@ def parse_resource_id(resource_id: str) -> dict[str, str]:
     m = _RESOURCE_ID.match(resource_id or "")
     if not m:
         raise AzureError(f"not an Azure resource ID: {resource_id!r}")
-    return {"subscription": m.group("sub"), "resource_group": m.group("rg"), "provider": m.group("provider"),
-            "name": m.group("name")}
+    return {
+        "subscription": m.group("sub"),
+        "resource_group": m.group("rg"),
+        "provider": m.group("provider"),
+        "name": m.group("name"),
+    }
 
 
 def power_state(vm: dict) -> str:
@@ -69,8 +79,9 @@ def guess_guest_os(vm: dict, os_disk: Optional[dict] = None) -> tuple[str, str]:
     storage = props.get("storageProfile") or {}
     img = storage.get("imageReference") or {}
     view = props.get("instanceView") or {}
-    os_type = str((storage.get("osDisk") or {}).get("osType") or ((os_disk or {}).get("properties") or {}).get(
-        "osType") or "").lower()
+    os_type = str(
+        (storage.get("osDisk") or {}).get("osType") or ((os_disk or {}).get("properties") or {}).get("osType") or ""
+    ).lower()
     publisher = str(img.get("publisher") or "").lower()
     offer = str(img.get("offer") or "").lower()
     sku = str(img.get("sku") or "").lower()
@@ -130,8 +141,11 @@ def guess_guest_os(vm: dict, os_disk: Optional[dict] = None) -> tuple[str, str]:
 
 # --------------------------------------------------------------------------- VmSpec
 def _firmware(vm: dict, os_disk: Optional[dict]) -> Firmware:
-    gen = str(((vm.get("properties") or {}).get("instanceView") or {}).get("hyperVGeneration")
-              or ((os_disk or {}).get("properties") or {}).get("hyperVGeneration") or "V1")
+    gen = str(
+        ((vm.get("properties") or {}).get("instanceView") or {}).get("hyperVGeneration")
+        or ((os_disk or {}).get("properties") or {}).get("hyperVGeneration")
+        or "V1"
+    )
     return Firmware.EFI if gen.upper() == "V2" else Firmware.BIOS
 
 
@@ -166,9 +180,18 @@ def vm_spec_from_azure(vm: dict, disks: dict[str, dict], sizes: dict[str, dict])
     def add(vm_disk: dict, label: str, lun: int) -> None:
         did = str((vm_disk.get("managedDisk") or {}).get("id") or "")
         doc = disks.get(did.lower())
-        spec = DiskSpec(index=len(disk_specs), label=label, device_key=lun, capacity_bytes=_disk_capacity(vm_disk, doc),
-                        controller_type=controller, controller_class="AzureManagedDisk", controller_bus=0,
-                        unit_number=lun, thin_provisioned=True, backing_file=did)
+        spec = DiskSpec(
+            index=len(disk_specs),
+            label=label,
+            device_key=lun,
+            capacity_bytes=_disk_capacity(vm_disk, doc),
+            controller_type=controller,
+            controller_class="AzureManagedDisk",
+            controller_bus=0,
+            unit_number=lun,
+            thin_provisioned=True,
+            backing_file=did,
+        )
         if _is_ade(vm_disk, doc):
             encrypted.append(label)
         disk_specs.append(spec)
@@ -182,8 +205,10 @@ def vm_spec_from_azure(vm: dict, disks: dict[str, dict], sizes: dict[str, dict])
     sec = props.get("securityProfile") or {}
     uefi = sec.get("uefiSettings") or {}
     guest_id, full_name = guess_guest_os(vm, os_disk)
-    nics = [NicSpec(label=str(n.get("id", "")).rsplit("/", 1)[-1], adapter_type="azure-vnic")
-            for n in ((props.get("networkProfile") or {}).get("networkInterfaces") or [])]
+    nics = [
+        NicSpec(label=str(n.get("id", "")).rsplit("/", 1)[-1], adapter_type="azure-vnic")
+        for n in ((props.get("networkProfile") or {}).get("networkInterfaces") or [])
+    ]
     return VmSpec(
         moid=str(vm.get("id") or "").lower(),
         name=str(vm.get("name") or ""),
@@ -251,7 +276,9 @@ def list_vm_summaries(session: AzureSession) -> list[VmSummary]:
                         view = session.client.get_vm_instance_view(vm_id)
                         merged = dict(vm)
                         props = merged.setdefault("properties", {})
-                        props["instanceView"] = view.get("properties") if isinstance(view.get("properties"), dict) else view
+                        props["instanceView"] = (
+                            view.get("properties") if isinstance(view.get("properties"), dict) else view
+                        )
                         vm = merged
                     except AzureError as exc2:
                         log.warning("instance view of %s unavailable: %s", vm_id.rsplit("/", 1)[-1], exc2)
@@ -315,6 +342,7 @@ def inspect_vm(session: AzureSession, vm_id: str, size_cache: Optional[dict] = N
             disks[did.lower()] = client.get_disk(did)
         except AzureError as exc:
             log.warning("disk %s of %s unreadable: %s", did.rsplit("/", 1)[-1], vm.get("name"), exc)
-    sizes = _sizes_for(client, size_cache if size_cache is not None else {}, ids["subscription"],
-                       str(vm.get("location") or ""))
+    sizes = _sizes_for(
+        client, size_cache if size_cache is not None else {}, ids["subscription"], str(vm.get("location") or "")
+    )
     return AzureVmDetails(vm, disks, vm_spec_from_azure(vm, disks, sizes))

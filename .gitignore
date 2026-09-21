@@ -35,10 +35,12 @@ runtime-settings.json
 helper/data/
 helper/certs/
 certs/
+*.pem
+*.key
+ui-password.hash
 
 # --- Terraform / Resource Manager local state (the stack zip in the repo root IS committed)
 .terraform/
-.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 terraform.tfvars

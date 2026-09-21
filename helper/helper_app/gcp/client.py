@@ -18,6 +18,7 @@ import httpx
 import jwt
 
 from helper_app.branding import PREFIX
+from helper_app.redaction import redact
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ _DISK = re.compile(
 
 class GcpError(RuntimeError):
     def __init__(self, message: str, code: str = "", status: Optional[int] = None):
-        super().__init__(message)
+        super().__init__(redact(message))
         self.code = code
         self.status = status
 
@@ -97,7 +98,7 @@ def normalize_instance_id(resource: str) -> str:
     if r.startswith("https://"):
         r = r.split("/compute/v1/", 1)[-1] if "/compute/v1/" in r else r.rsplit("/", 3)[-1]
     if r.startswith("compute/v1/"):
-        r = r[len("compute/v1/"):]
+        r = r[len("compute/v1/") :]
     return r
 
 
@@ -227,8 +228,15 @@ class GcpClient:
     def _retry_after(resp: httpx.Response, default: float = DEFAULT_POLL_S) -> float:
         return default
 
-    def wait_zone_operation(self, project: str, zone: str, op_name: str, timeout_s: float,
-                            what: str = "", on_wait: Optional[Callable[[], None]] = None) -> dict:
+    def wait_zone_operation(
+        self,
+        project: str,
+        zone: str,
+        op_name: str,
+        timeout_s: float,
+        what: str = "",
+        on_wait: Optional[Callable[[], None]] = None,
+    ) -> dict:
         path = f"/projects/{project}/zones/{zone}/operations/{op_name}"
         deadline = self._clock() + timeout_s
         wait = DEFAULT_POLL_S
@@ -246,8 +254,9 @@ class GcpClient:
                 return op
             wait = self._retry_after(httpx.Response(200), wait)
 
-    def wait_global_operation(self, project: str, op_name: str, timeout_s: float,
-                              what: str = "", on_wait: Optional[Callable[[], None]] = None) -> dict:
+    def wait_global_operation(
+        self, project: str, op_name: str, timeout_s: float, what: str = "", on_wait: Optional[Callable[[], None]] = None
+    ) -> dict:
         path = f"/projects/{project}/global/operations/{op_name}"
         deadline = self._clock() + timeout_s
         wait = DEFAULT_POLL_S
@@ -308,9 +317,14 @@ class GcpClient:
 
     def list_projects(self) -> list[dict]:
         try:
-            return [{"id": p.get("projectId") or "", "name": p.get("name") or p.get("displayName") or "",
-                     "number": str(p.get("projectNumber") or "")}
-                    for p in self.paged(RM_BASE, "/projects", what="list projects")]
+            return [
+                {
+                    "id": p.get("projectId") or "",
+                    "name": p.get("name") or p.get("displayName") or "",
+                    "number": str(p.get("projectNumber") or ""),
+                }
+                for p in self.paged(RM_BASE, "/projects", what="list projects")
+            ]
         except GcpAuthError:
             raise
         except GcpError:
@@ -323,8 +337,7 @@ class GcpClient:
         page_token: Optional[str] = None
         while True:
             params = {"pageToken": page_token} if page_token else None
-            resp = self._request("GET", self.compute_base, path, params=params,
-                                 what=f"list instances in {project}")
+            resp = self._request("GET", self.compute_base, path, params=params, what=f"list instances in {project}")
             body = resp.json() if resp.content else {}
             for group in (body.get("items") or {}).values():
                 for inst in group.get("instances") or []:
@@ -343,7 +356,9 @@ class GcpClient:
         """``disk_url`` is a full disk URL or ``projects/.../zones/.../disks/...``."""
         if disk_url.startswith("http"):
             disk_url = disk_url.split("/compute/v1/", 1)[-1]
-        return self.get_json(self.compute_base, f"/{disk_url.lstrip('/')}", what=f"get disk {disk_url.rsplit('/', 1)[-1]}")
+        return self.get_json(
+            self.compute_base, f"/{disk_url.lstrip('/')}", what=f"get disk {disk_url.rsplit('/', 1)[-1]}"
+        )
 
     def get_machine_type(self, machine_type_url: str) -> dict:
         if machine_type_url.startswith("http"):
@@ -359,8 +374,9 @@ class GcpClient:
         if op.get("status") == "DONE":
             return
         if name:
-            self.wait_zone_operation(ids["project"], ids["zone"], name, timeout_s,
-                                     what=f"stop {ids['name']}", on_wait=on_wait)
+            self.wait_zone_operation(
+                ids["project"], ids["zone"], name, timeout_s, what=f"stop {ids['name']}", on_wait=on_wait
+            )
 
     def create_snapshot(
         self,
@@ -376,12 +392,12 @@ class GcpClient:
         body: dict[str, Any] = {"name": snapshot_name}
         if labels:
             body["labels"] = labels
-        resp = self._request("POST", self.compute_base, path, json_body=body,
-                             what=f"create snapshot {snapshot_name}")
+        resp = self._request("POST", self.compute_base, path, json_body=body, what=f"create snapshot {snapshot_name}")
         op = resp.json() if resp.content else {}
         if op.get("status") != "DONE" and op.get("name"):
-            self.wait_zone_operation(project, zone, op["name"], timeout_s,
-                                     what=f"snapshot {snapshot_name}", on_wait=on_wait)
+            self.wait_zone_operation(
+                project, zone, op["name"], timeout_s, what=f"snapshot {snapshot_name}", on_wait=on_wait
+            )
         snap_path = f"/projects/{project}/global/snapshots/{snapshot_name}"
         return self.get_json(self.compute_base, snap_path, what=f"get snapshot {snapshot_name}")
 
@@ -411,8 +427,11 @@ class GcpClient:
             if status in ("FAILURE", "CANCELLED", "EXPIRED", "INTERNAL_ERROR", "TIMEOUT"):
                 detail = build.get("statusDetail") or build.get("failureInfo") or status
                 log_lines = (build.get("logUrl") or "") if isinstance(build.get("logUrl"), str) else ""
-                raise GcpError(f"{label}: Cloud Build {status.lower()}" + (f": {detail}" if detail else "")
-                               + (f" (logs: {log_lines})" if log_lines else ""))
+                raise GcpError(
+                    f"{label}: Cloud Build {status.lower()}"
+                    + (f": {detail}" if detail else "")
+                    + (f" (logs: {log_lines})" if log_lines else "")
+                )
             wait = min(MAX_POLL_S, wait * 1.2)
 
     def export_snapshot(
@@ -457,17 +476,20 @@ class GcpClient:
             "serviceAccount": f"projects/{project}/serviceAccounts/{compute_sa}",
             # Custom build SA requires explicit logging (no default GCS logs bucket).
             "options": {"logging": "CLOUD_LOGGING_ONLY"},
-            "steps": [{
-                "name": GCE_EXPORT_IMAGE,
-                "args": args,
-                "env": ["BUILD_ID=$BUILD_ID"],
-            }],
+            "steps": [
+                {
+                    "name": GCE_EXPORT_IMAGE,
+                    "args": args,
+                    "env": ["BUILD_ID=$BUILD_ID"],
+                }
+            ],
             "tags": ["gce-daisy", "gce-daisy-image-export", PREFIX],
         }
         what = f"export snapshot {snapshot_name} to {dest_uri}"
         try:
-            resp = self._request("POST", CLOUD_BUILD_BASE, f"/projects/{project}/builds",
-                                 json_body=build_body, what=what)
+            resp = self._request(
+                "POST", CLOUD_BUILD_BASE, f"/projects/{project}/builds", json_body=build_body, what=what
+            )
         except GcpAuthError as exc:
             if exc.status == 403 and "act as service account" in str(exc).lower():
                 raise GcpAuthError(
@@ -505,8 +527,13 @@ class GcpClient:
 
     def cancel_cloud_build(self, project: str, build_id: str) -> None:
         try:
-            self._request("POST", CLOUD_BUILD_BASE, f"/projects/{project}/builds/{build_id}:cancel",
-                          json_body={}, what=f"cancel cloud build {build_id}")
+            self._request(
+                "POST",
+                CLOUD_BUILD_BASE,
+                f"/projects/{project}/builds/{build_id}:cancel",
+                json_body={},
+                what=f"cancel cloud build {build_id}",
+            )
             log.info("cancelled Cloud Build %s", build_id)
         except GcpError as exc:
             log.warning("could not cancel Cloud Build %s: %s", build_id, exc)
@@ -625,8 +652,7 @@ class GcpClient:
 
     def delete_bucket(self, bucket: str) -> None:
         try:
-            self._request("DELETE", self.storage_base, f"/b/{quote(bucket, safe='')}",
-                          what=f"delete bucket {bucket}")
+            self._request("DELETE", self.storage_base, f"/b/{quote(bucket, safe='')}", what=f"delete bucket {bucket}")
         except GcpError as exc:
             if exc.status in (403, 404):
                 return

@@ -68,7 +68,7 @@ class Settings(BaseSettings):
 
     # Logging (both adjustable from the Setup page; changes persist in runtime_settings_path)
     log_level: str = "INFO"
-    oci_log_requests: bool = False  # log every OCI SDK request/response (bodies included) at DEBUG
+    oci_log_requests: bool = False  # enable redacted OCI SDK diagnostic logging at DEBUG (no raw wire dumps)
     runtime_settings_path: str = "/var/lib/vc-oci-helper/runtime-settings.json"
     ui_password_hash_path: str = "/var/lib/vc-oci-helper/ui-password.hash"
 

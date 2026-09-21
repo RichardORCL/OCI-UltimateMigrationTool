@@ -35,7 +35,7 @@ def client_ip(request: Request) -> str:
 
 
 async def require_session(request: Request) -> UserSession:
-    """Any UI session: a vCenter login or the anonymous session of the ISO flow."""
+    """Any unlocked UI session, with or without a source-provider login."""
     session = request.app.state.sessions.get(session_token(request))
     if session is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "not logged in")

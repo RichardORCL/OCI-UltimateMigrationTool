@@ -271,7 +271,7 @@ def test_logging_settings_apply_and_persist(tmp_path, fast_retries):
             assert r.status_code == 200, r.text
             assert r.json()["persisted"] is True and r.json()["warning"] == ""
             assert root.level == logging.DEBUG
-            assert http.client.HTTPConnection.debuglevel == 1
+            assert http.client.HTTPConnection.debuglevel == 0  # raw dumps bypass redaction
             assert oci_client_logger.disabled is False and oci_client_logger.level == logging.DEBUG
             assert json.loads(Path(env.settings.runtime_settings_path).read_text()) == {"log_level": "DEBUG", "oci_log_requests": True}
 
@@ -1055,7 +1055,7 @@ def test_interrupted_jobs_fail_on_restart_and_can_be_cleaned_up(tmp_path, fast_r
         assert c.post("/api/jobs/stale1/cancel").status_code == 202
         job = wait_phase(c, "stale1", "CANCELLED")
         assert "nothing to clean up" in job["message"]
-        assert c.post("/api/jobs/stale1/cancel").status_code == 409
+        assert c.post("/api/jobs/stale1/cancel").status_code == 202  # cleanup is retryable
 
 
 def test_seed_image_cleanup_endpoint(env):

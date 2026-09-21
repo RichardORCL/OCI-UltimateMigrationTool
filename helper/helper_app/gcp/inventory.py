@@ -6,7 +6,7 @@ import logging
 import re
 from typing import Optional
 
-from helper_app.gcp.client import GcpClient, GcpError, normalize_instance_id, parse_instance_id
+from helper_app.gcp.client import GcpError, normalize_instance_id, parse_instance_id
 from helper_app.gcp.session import GcpSession
 from helper_app.models import DiskSpec, Firmware, NicSpec, VmSpec, VmSummary
 

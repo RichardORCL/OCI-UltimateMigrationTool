@@ -1,4 +1,4 @@
-"""Web UI sessions: an opaque cookie token mapped to a logged-in vCenter session.
+"""Web UI sessions: opaque cookies with optional VMware, Azure, GCP or AWS credentials.
 
 A session that started a migration is *pinned* by that job: logging out or idling past the
 TTL marks the session dead, but the underlying vCenter connection is only closed once the last
@@ -28,7 +28,7 @@ ANONYMOUS_USER = "anonymous"
 
 class UserSession:
     """A web UI session.  ``vc`` is the vCenter connection of a logged-in user, ``azure`` the service
-    principal of an Azure login; both ``None`` for an *anonymous* session (the ISO flow needs neither)."""
+    principal of an Azure login; GCP/AWS have their own backends. All are ``None`` for anonymous sessions."""
 
     def __init__(self, token: str, vc: Optional[VCenterSession], ttl_s: float,
                  azure: Optional[AzureSession] = None, gcp: Optional[GcpSession] = None,
@@ -55,6 +55,10 @@ class UserSession:
         self._dead = False
         self._lock = threading.Lock()
         self.cache: dict[str, object] = {}  # per-session scratch space (e.g. the VM list)
+
+    def cloud_backend(self, kind: str):
+        """Return credentials for a supported cloud job, never an arbitrary session attribute."""
+        return {"azure": self.azure, "gcp": self.gcp, "aws": self.aws}.get(kind)
 
     # ------------------------------------------------------------- lifetime
     def touch(self) -> None:

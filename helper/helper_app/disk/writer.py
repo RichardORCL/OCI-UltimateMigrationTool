@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import stat
+import threading
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Protocol
 
@@ -31,6 +33,7 @@ class BlockDeviceWriter:
             flags |= os.O_BINARY  # type: ignore[attr-defined]
         self._fd = os.open(self.path, flags, 0o600)
         self._closed = False
+        self._write_lock = nullcontext() if _HAS_PWRITE else threading.Lock()
         self._is_regular = stat.S_ISREG(os.fstat(self._fd).st_mode)
         self._size = self._probe_size()
         if expected_min_size is not None:
@@ -59,17 +62,19 @@ class BlockDeviceWriter:
         return self._size
 
     def write_at(self, offset: int, data: bytes) -> None:
-        view = memoryview(data)
-        while view:
-            if _HAS_PWRITE:
-                n = os.pwrite(self._fd, view, offset)
-            else:  # Windows dev fallback; the helper itself always runs on Linux
-                os.lseek(self._fd, offset, os.SEEK_SET)
-                n = os.write(self._fd, view)
-            if n <= 0:
-                raise OSError(f"short write at offset {offset} on {self.path}")
-            offset += n
-            view = view[n:]
+        with self._write_lock:
+            view = memoryview(data)
+            while view:
+                if _HAS_PWRITE:
+                    n = os.pwrite(self._fd, view, offset)
+                else:  # Windows dev fallback; the helper itself always runs on Linux
+                    os.lseek(self._fd, offset, os.SEEK_SET)
+                    n = os.write(self._fd, view)
+                if n <= 0:
+                    raise OSError(f"short write at offset {offset} on {self.path}")
+                offset += n
+                view = view[n:]
+
 
     def ensure_size(self, size: int) -> None:
         """For regular files only: extend to ``size`` so unallocated grains read as zeros."""

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
@@ -45,9 +44,6 @@ class OvfInspectResult:
     secure_boot: bool | None = None
     disk_count: int = 0
     boot_disk_bytes: int | None = None
-
-
-_OVF_NS = re.compile(r"\{(.*)\}")
 
 
 def _local(tag: str) -> str:
@@ -103,7 +99,7 @@ def parse_ovf(xml_bytes: bytes) -> ParsedOvf:
 
     files: dict[str, OvfFile] = {}
     disks: list[OvfDisk] = []
-    boot_ids: list[str] = []
+    boot_refs: list[tuple[int | None, str]] = []
 
     for elem in root.iter():
         name = _local(elem.tag)
@@ -130,12 +126,20 @@ def parse_ovf(xml_bytes: bytes) -> ParsedOvf:
             order = elem.get("order") or elem.get("{http://schemas.dmtf.org/ovf/envelope/1}order")
             ref = elem.get("deviceRef") or elem.get("{http://schemas.dmtf.org/ovf/envelope/1}deviceRef")
             if ref:
-                boot_ids.append(ref)
+                try:
+                    priority = int(order) if order is not None else None
+                except ValueError as exc:
+                    raise OvfParseError(f"invalid boot order {order!r}") from exc
+                if priority is not None and priority < 0:
+                    raise OvfParseError(f"invalid boot order {order!r}")
+                boot_refs.append((priority, ref))
 
     if not disks:
         raise OvfParseError("OVF contains no Disk elements")
 
-    return ParsedOvf(disks=disks, files=files, boot_disk_ids=boot_ids)
+    # Explicit priorities first; ties and missing priorities retain document order.
+    boot_refs.sort(key=lambda item: (item[0] is None, item[0] or 0))
+    return ParsedOvf(disks=disks, files=files, boot_disk_ids=[ref for _, ref in boot_refs])
 
 
 def boot_disk_index(parsed: ParsedOvf) -> int:

@@ -9,10 +9,6 @@ from helper_app.models import DiskSpec, Firmware, NicSpec, VmSpec, VmSummary
 log = logging.getLogger(__name__)
 
 
-class PreflightError(ValueError):
-    pass
-
-
 def _controller_type(ctrl) -> str:
     from pyVmomi import vim
 

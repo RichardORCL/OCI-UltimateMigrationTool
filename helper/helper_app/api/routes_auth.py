@@ -1,4 +1,4 @@
-"""Login / logout with vCenter credentials or an Azure service principal."""
+"""Login / logout with source-provider credentials or the shared UI password."""
 
 from __future__ import annotations
 
@@ -61,6 +61,7 @@ def first_use(body: FirstUseRequest, request: Request, response: Response):
         if len(body.password) < MIN_PASSWORD_LENGTH:
             raise HTTPException(422, f"password must be at least {MIN_PASSWORD_LENGTH} characters")
         st.ui_password.set_password(body.password)
+        st.sessions.logout_others(session_token(request))
     mark_prompt_done(st.settings)
     existing = existing_session(request)
     if existing is not None:
@@ -191,7 +192,8 @@ def logout(request: Request, response: Response):
     st = request.app.state
     st.sessions.logout(session_token(request))
     response.delete_cookie(st.settings.session_cookie_name, path="/")
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
 
 
 @router.get("/me", response_model=SessionInfo)

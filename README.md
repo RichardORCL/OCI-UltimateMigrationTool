@@ -2,8 +2,9 @@
 
 The **OCI Ultimate Migration Tool** brings virtual machines into Oracle Cloud Infrastructure. It runs as a
 single VM in your OCI tenancy with a web UI: log in to the source platform, pick the VMs, choose where they
-should land in OCI, and follow the progress. Every migration ends in a ready-to-run OCI compute instance with
-the original disks, firmware settings and sizing.
+should land in OCI, and follow the progress. The tool creates OCI instances from the source disks and maps
+firmware and sizing to supported OCI options. Review the [guest prerequisites and limitations](docs/limitations.md)
+before migration; some guests need driver installation or manual configuration to boot correctly.
 
 **Migrate from**
 
@@ -19,10 +20,9 @@ the original disks, firmware settings and sizing.
 - **OCI Remote Console** - open the VNC console of any compute instance in your browser
 - **Export from OCI to OVA/OVF** - turn an OCI instance into an OVA/OVF package in Object Storage
 
-![Start page of the OCI Ultimate Migration Tool](docs/Screenshot.png)
-
-Not in scope: live migration with delta sync, VMware Workstation/Fusion, Hyper-V or KVM sources, and
-guest-side reconfiguration (IP addresses, drivers). See [docs/limitations.md](docs/limitations.md).
+Linux guests support optional initramfs, DHCP network and cloud-agent fixes on the OCI copy. Windows
+guests may need VirtIO drivers installed before migration. Live migration with delta sync, VMware
+Workstation/Fusion, Hyper-V and KVM sources are not supported. See [docs/limitations.md](docs/limitations.md).
 
 ## Quick start
 
@@ -37,6 +37,10 @@ guest-side reconfiguration (IP addresses, drivers). See [docs/limitations.md](do
 3. **Pick what you want to do** on the start page: a source platform to migrate from, or one of the extra
    features. Each card explains what it needs, and the *(i)* buttons show how to prepare the source
    credentials.
+
+Without a UI password, anyone who can reach the UI can create an anonymous session and manage OCI
+resources within the tool VM's IAM scope. All unlocked sessions share that authority; source login does
+not isolate jobs by user. Configure a password on first use and restrict access to administrators.
 
 ## Networking
 
@@ -53,6 +57,12 @@ port 8443. The full list of flows and ports is in
 - [docs/architecture.md](docs/architecture.md) - internals of the migration pipeline
 - [docs/os-mapping.md](docs/os-mapping.md) - guest OS, launch option and shape mapping tables
 - [docs/limitations.md](docs/limitations.md) - known limitations and troubleshooting
+
+## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, validation, dependency updates and stack packaging.
+
+Contributor: [RichardORCL](https://github.com/RichardORCL).
 
 ## License
 

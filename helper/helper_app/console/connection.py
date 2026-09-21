@@ -17,9 +17,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from helper_app.oci.clients import OciClients, OciError
-
 from helper_app.branding import TAG_CONSOLE, TAG_CONSOLE_VALUE, TAG_JOB
+from helper_app.oci.clients import OciClients, OciError
 
 TAG_KEY = TAG_CONSOLE
 TAG_VALUE = TAG_CONSOLE_VALUE

@@ -189,7 +189,7 @@ class Updater:
             b = shlex.quote(branch)
             steps += [f"git -C {src} checkout --force {b}", f"git -C {src} reset --hard origin/{b}"]
         steps += [
-            f"{venv}/bin/pip install --quiet --upgrade {src}/helper",
+            f"{venv}/bin/pip install --quiet --upgrade -c {src}/helper/constraints.txt {src}/helper",
             f'echo "== $(date -Is) restarting {self.service}"',
             f"systemctl restart {shlex.quote(self.service)}",
             'echo "== $(date -Is) update finished"',

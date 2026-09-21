@@ -8,7 +8,6 @@ from helper_app.aws.client import AwsAuthError, AwsError
 from helper_app.aws.export import AwsDiskExport, release_aws_resources
 from helper_app.aws.inventory import inspect_vm, list_vm_summaries
 from helper_app.aws.preflight import preflight, warnings
-from helper_app.aws.session import AwsConnector
 from helper_app.config import Settings
 from helper_app.disk.ebs_range_copy import copy_blocks, list_blocks
 from helper_app.disk.writer import BlockDeviceWriter

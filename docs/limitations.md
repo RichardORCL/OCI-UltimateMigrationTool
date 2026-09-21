@@ -29,6 +29,20 @@
 - **Export OCI instance to OVA/OVF** writes a **separate OVF set** in Object Storage (`.ovf` + one stream-optimized `.vmdk` per disk + `.mf`), not a single `.ova` tarball. Only the **boot volume** is detached from the source; block volumes stay attached and are also attached to the Migration Tool as *shareable* (a non-shareable data attachment is converted first while the instance is still running; emulated attachments cannot be shared and are detached for the copy). The instance is **stopped for the copy and left stopped**; start it again from the OCI console. Only `RUNNING` or `STOPPED` instances can be exported; the migration tool VM itself is refused. Data volumes are included unless the operator unticks *Include attached block volumes*. The tool's IAM policy must already cover the source instance and its volumes (`manage instance-family` / `volume-family` in that compartment); objects are written with the existing Object Storage manage-objects grant. Cancel reattaches the boot volume and does not delete objects already uploaded.
 - **OCI Remote Console** (start page) works for any instance in the policy scope of the migration tool VM (`manage instance-family`, which includes `instance-console-connections`); instances outside it are neither listed nor found. The name search uses OCI Resource Search (`query instance resources where displayName =~ '<text>'`, a case-insensitive substring match on the display name, across all compartments the VM may read, at most 200 results) and returns no shape (the search summary carries none). Terminated instances are left out. OCI allows one console connection per instance: a connection that was not created by the migration tool has to be replaced (prompt) or deleted in the OCI console first; connections opened from this page are deleted when the console is closed or idle (`HELPER_CONSOLE_IDLE_TIMEOUT_S`), like the job consoles. A console opened here for a migrated instance and the *Remote console* button of its job share one connection.
 
+## Diagnostics and cleanup
+
+Diagnostics redact URL query strings and common credential fields. They still contain usernames,
+resource IDs, hostnames and addresses; review the output before sharing it. Raw HTTP request/response
+dumps are disabled even when OCI request logging is enabled.
+
+Cleanup can be retried on cancelled jobs using **Retry cleanup**. Log in to the matching source first
+to release snapshots or export access. A failed cloud deletion leaves its resource identifiers in the
+job record for the next attempt. Completed migrations cannot be cancelled through this endpoint.
+
+GCP exports must match the source disk's logical size; short or oversized exports fail instead of
+silently completing. OVA transfers check cancellation between chunks and close disk and HTTP handles
+on failure or cancellation.
+
 ## Troubleshooting
 
 | Symptom | Check |

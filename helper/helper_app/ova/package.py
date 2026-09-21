@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-import io
 import logging
 import tarfile
+import warnings
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass, replace
 
 from helper_app.oci.clients import OciClients, OciError
-from helper_app.oci.object_bytes import open_object_stream, read_object_bytes as _read_object_bytes
+from helper_app.oci.object_bytes import open_object_stream
+from helper_app.oci.object_bytes import read_object_bytes as _read_object_bytes
 from helper_app.oci.options import object_storage_namespace
 from helper_app.ova.ovf import OvfParseError, boot_disk_index, inspect_ovf, parse_ovf
 
@@ -104,29 +106,7 @@ def read_ovf_from_object(
         return _fetch_object_bytes(c, namespace, bucket, object_name)
     if not low.endswith(".ova"):
         raise OvaPackageError("Load requires an .ova or .ovf file (a standalone .vmdk has no OVF descriptor)")
-    try:
-        resp = c.object_storage.get_object(namespace, bucket, object_name)
-    except Exception as exc:  # noqa: BLE001
-        raise OvaPackageError(f"cannot read {bucket}/{object_name}: {exc}") from exc
-    stream = open_object_stream(resp.data)
-    ovf_bytes: bytes | None = None
-    chunk = 1024 * 1024
-    with tarfile.open(fileobj=stream, mode="r|*") as tar:
-        for member in tar:
-            if not member.isfile():
-                continue
-            base = member.name.split("/")[-1]
-            f = tar.extractfile(member)
-            if f is None:
-                continue
-            if base.lower().endswith(".ovf"):
-                ovf_bytes = f.read()
-                break
-            while f.read(chunk):
-                pass
-    if ovf_bytes is None:
-        raise OvaPackageError(f"{object_name} contains no .ovf descriptor")
-    return ovf_bytes
+    return _ovf_from_ova_stream(c, namespace, bucket, object_name)
 
 
 def inspect_ova_object(
@@ -139,7 +119,12 @@ def inspect_ova_object(
     import math
 
     from helper_app.models import OvaInspectResponse
-    from helper_app.oci.mapping import map_ovf_description, normalize_os_version_for_oci, os_version_choices, volume_size_gb
+    from helper_app.oci.mapping import (
+        map_ovf_description,
+        normalize_os_version_for_oci,
+        os_version_choices,
+        volume_size_gb,
+    )
 
     ovf_bytes = read_ovf_from_object(c, namespace, bucket, object_name)
     try:
@@ -217,7 +202,7 @@ def _ovf_from_ova_stream(
     stream = open_object_stream(resp.data)
     ovf_bytes: bytes | None = None
     chunk = 1024 * 1024
-    with tarfile.open(fileobj=stream, mode="r|*") as tar:
+    with closing(stream), tarfile.open(fileobj=stream, mode="r|*") as tar:
         for member in tar:
             if not member.isfile():
                 continue
@@ -330,7 +315,7 @@ def _extract_ova_tar(
     stream = open_object_stream(resp.data)
     ovf_bytes: bytes | None = None
     vmdks: dict[str, bytes] = {}
-    with tarfile.open(fileobj=stream, mode="r|*") as tar:
+    with closing(stream), tarfile.open(fileobj=stream, mode="r|*") as tar:
         for member in tar:
             if not member.isfile():
                 continue
@@ -372,6 +357,7 @@ def parse_and_stage(
     job_id: str,
 ) -> ParsedOva:
     """Parse ``object_name`` (``.ova``, ``.ovf``, or ``.vmdk``) and stage VMDKs under ``oci-umt-ova/{job_id}/``."""
+    warnings.warn("parse_and_stage is deprecated; use parse_ova_layout", DeprecationWarning, stacklevel=2)
     prefix = f"{STAGING_ROOT}/{job_id}"
     low = object_name.lower()
 

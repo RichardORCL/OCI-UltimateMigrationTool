@@ -1,4 +1,4 @@
-"""Runtime-adjustable logging: helper log level and OCI SDK request/response dumps.
+"""Runtime-adjustable logging: helper log level and redacted OCI SDK diagnostics.
 
 Both can be changed from the Setup page without a restart and are persisted to a small JSON file
 (``HELPER_RUNTIME_SETTINGS_PATH``) that overrides the environment on the next start.
@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from helper_app import runtime_settings
 from helper_app.config import Settings
+from helper_app.redaction import configure_logging_redaction
 
 log = logging.getLogger(__name__)
 
@@ -44,10 +45,11 @@ def configure_stdout() -> None:
 
 def _set_oci_request_logging(enabled: bool) -> None:
     """The SDK creates one logger per client (``oci.base_client.<id>``), disabled unless the client was
-    built with ``log_requests``; bodies are printed through ``http.client`` debug output."""
+    built with ``log_requests``; raw ``http.client`` output is deliberately disabled."""
     import http.client
 
-    http.client.HTTPConnection.debuglevel = 1 if enabled else 0
+    # Raw http.client dumps bypass logging filters and expose credentials/bodies.
+    http.client.HTTPConnection.debuglevel = 0
     for name, logger in list(logging.Logger.manager.loggerDict.items()):
         if isinstance(logger, logging.Logger) and name.startswith(OCI_CLIENT_LOGGER_PREFIX):
             logger.disabled = not enabled
@@ -57,6 +59,7 @@ def _set_oci_request_logging(enabled: bool) -> None:
 
 def apply(settings: Settings) -> None:
     """Make the process match ``settings.log_level`` / ``settings.oci_log_requests``."""
+    configure_logging_redaction()
     level = settings.log_level.upper()
     if level not in LEVELS:
         log.warning("unknown log level %r; using INFO", settings.log_level)
@@ -64,7 +67,7 @@ def apply(settings: Settings) -> None:
     logging.getLogger().setLevel(getattr(logging, level))
     # keep the chatty libraries at INFO+ even when the helper itself logs DEBUG
     for noisy in ("httpx", "httpcore", "urllib3", "pyVmomi"):
-        logging.getLogger(noisy).setLevel(max(logging.INFO, getattr(logging, level)))
+        logging.getLogger(noisy).setLevel(max(logging.WARNING, getattr(logging, level)))
     _set_oci_request_logging(settings.oci_log_requests)
 
 

@@ -20,17 +20,17 @@ from typing import Callable, Optional
 import httpx
 
 from helper_app.aws.client import AwsError
-from helper_app.aws.export import AwsDiskExport, release_aws_resources
+from helper_app.aws.export import AwsDiskExport
 from helper_app.aws.inventory import power_state as aws_power_state
 from helper_app.azure.client import AzureError
-from helper_app.azure.export import AzureDiskExport, release_azure_resources
+from helper_app.azure.export import AzureDiskExport
 from helper_app.azure.inventory import power_state as azure_power_state
 from helper_app.config import Settings
 from helper_app.disk.ebs_range_copy import EbsCopyError, copy_blocks, list_blocks
 from helper_app.disk.gcs_range_copy import (
     GcsCopyError,
     copy_from_gcs_export_tarball,
-    copy_sequential,
+    copy_parallel_ranges,
     object_size,
 )
 from helper_app.disk.pipeline import PipelinedDecoder
@@ -38,10 +38,11 @@ from helper_app.disk.vhd_range_copy import VhdCopyError, blob_length, copy_range
 from helper_app.disk.vmdk_stream import DecodeStats, StreamOptimizedDecoder, VmdkFormatError
 from helper_app.disk.writer import BlockDeviceWriter
 from helper_app.gcp.client import GcpError
-from helper_app.gcp.export import GcpDiskExport, release_gcp_resources
+from helper_app.gcp.export import GcpDiskExport
 from helper_app.gcp.inventory import power_state as gcp_power_state
 from helper_app.guest.fixup import GuestFixer, GuestFixerFn
 from helper_app.jobs.progress import RateMeter
+from helper_app.jobs.source_cleanup import release_source
 from helper_app.jobs.store import JobStore, utcnow
 from helper_app.models import DiskState, DiskStatus, GuestFixup, Job, JobPhase
 from helper_app.oci.clients import describe_error
@@ -139,7 +140,7 @@ class MigrationRunner:
 
     def cleanup(self, job_id: str, session: Optional[UserSession] = None) -> Future:
         """Tear down the OCI resources of a job that is not running (failed or restarted).  ``session`` (an
-        Azure login) lets the cleanup also revoke export SAS / delete snapshots an Azure job left behind."""
+        cloud login) lets cleanup release export access, snapshots and staging objects left behind."""
         with self._lock:
             self._running.add(job_id)
             if session is not None:
@@ -258,9 +259,7 @@ class MigrationRunner:
             self._save(job, message="Cancelled; cleaning up OCI resources")
             try:
                 self.prov.cleanup(job)
-                self._release_azure(job)
-                self._release_gcp(job)
-                self._release_aws(job)
+                self._release_source(job)
             except Exception as exc:  # noqa: BLE001
                 log.warning("cleanup for %s failed: %s", job.id, describe_error(exc))
                 job.phase = JobPhase.CANCELLED
@@ -276,61 +275,8 @@ class MigrationRunner:
                 self._release_slot()
             self._finish(job_id)
 
-    def _release_azure(self, job: Job) -> None:
-        """Revoke export SAS / delete snapshots still recorded on an Azure job, with the session that runs
-        (or cleans up) the job.  Appends the outcome to the job message."""
-        info = job.azure
-        if job.kind != "azure" or info is None or not (info.sas_granted or info.snapshot_ids):
-            return
-        session = self._sessions.get(job.id)
-        if session is None or session.azure is None:
-            left = [s.rsplit("/", 1)[-1] for s in info.sas_granted] + [s.rsplit("/", 1)[-1] for s in info.snapshot_ids]
-            job.message = (job.message + "; " if job.message else "") + (
-                "Azure resources left behind (no Azure login to release them): " + ", ".join(left)
-                + " - log in to Azure and cancel the job again, or revoke the export access (az disk/snapshot "
-                "revoke-access) and delete the snapshots in the portal")
-            self.store.put(job)
-            return
-        actions = release_azure_resources(session.azure.client, info)
-        if actions:
-            job.message = (job.message + "; " if job.message else "") + "Azure: " + "; ".join(actions)
-        self.store.put(job)
-
-    def _release_gcp(self, job: Job) -> None:
-        info = job.gcp
-        if job.kind != "gcp" or info is None or not (
-            info.snapshot_names or info.gcs_objects or info.export_prefix
-        ):
-            return
-        session = self._sessions.get(job.id)
-        if session is None or session.gcp is None:
-            left = list(info.gcs_objects) + list(info.snapshot_names)
-            job.message = (job.message + "; " if job.message else "") + (
-                "GCP export objects/snapshots left behind (no GCP login to release them): "
-                + ", ".join(left))
-            self.store.put(job)
-            return
-        actions = release_gcp_resources(session.gcp.client, info)
-        if actions:
-            job.message = (job.message + "; " if job.message else "") + "GCP: " + "; ".join(actions)
-        self.store.put(job)
-
-    def _release_aws(self, job: Job) -> None:
-        info = job.aws
-        if job.kind != "aws" or info is None or not info.snapshot_ids:
-            return
-        session = self._sessions.get(job.id)
-        if session is None or session.aws is None:
-            left = [s for s in info.snapshot_ids if s]
-            job.message = (job.message + "; " if job.message else "") + (
-                "AWS snapshots left behind (no AWS login to release them): " + ", ".join(left)
-                + " - log in to AWS and cancel the job again, or delete the snapshots in the EC2 console")
-            self.store.put(job)
-            return
-        actions = release_aws_resources(session.aws.client, info)
-        if actions:
-            job.message = (job.message + "; " if job.message else "") + "AWS: " + "; ".join(actions)
-        self.store.put(job)
+    def _release_source(self, job: Job) -> None:
+        release_source(job, self._sessions.get(job.id), self.store.put)
 
     def _run_ova_export_safely(self, job_id: str) -> None:
         job = self.store.get(job_id)
@@ -455,9 +401,7 @@ class MigrationRunner:
                 self.ova_export.cleanup(job)
             elif job is not None:
                 self.prov.cleanup(job)
-                self._release_azure(job)
-                self._release_gcp(job)
-                self._release_aws(job)
+                self._release_source(job)
         except Exception as exc:  # noqa: BLE001
             log.exception("cleanup of %s failed", job_id)
             if job is not None:
@@ -608,7 +552,7 @@ class MigrationRunner:
         self.prov.finalize(job)
         self._save(job, message=f"Migration complete: instance {job.instance_id}")
 
-    def _record_azure_progress(self, job: Job, disk: DiskState, received: int, written: int, chunks: int,
+    def _record_cloud_progress(self, job: Job, disk: DiskState, received: int, written: int, chunks: int,
                                rate_bps: float, written_before: int) -> None:
         disk.bytes_received = received
         disk.bytes_written = written
@@ -622,7 +566,7 @@ class MigrationRunner:
         done = sum(d.bytes_written for d in job.disks if d is not disk) + written
         job.transfer.percent = max(0, min(99, int(done * 100 / job_total))) if job_total else 0
 
-    def _azure_progress_callback(self, job: Job, disk: DiskState, meter: RateMeter,
+    def _cloud_progress_callback(self, job: Job, disk: DiskState, meter: RateMeter,
                                  written_before: int) -> Callable[[int], None]:
         """Per-chunk progress hook for ``copy_ranges`` (called from several download threads): counts the
         bytes and persists the job every PROGRESS_SAVE_BYTES / PROGRESS_SAVE_SECONDS."""
@@ -639,7 +583,7 @@ class MigrationRunner:
                 if (state["received"] - state["last_saved"] >= PROGRESS_SAVE_BYTES
                         or now - state["last_saved_at"] >= PROGRESS_SAVE_SECONDS):
                     state["last_saved"], state["last_saved_at"] = state["received"], now
-                    self._record_azure_progress(job, disk, state["received"], state["received"], state["chunks"],
+                    self._record_cloud_progress(job, disk, state["received"], state["received"], state["chunks"],
                                                 meter.rate(), written_before)
                     self.store.put(job)
 
@@ -680,10 +624,10 @@ class MigrationRunner:
                     client, lambda: export.sas_url(disk.index), ranges, writer,
                     chunk_bytes=self.s.azure_range_chunk_bytes, workers=self.s.azure_range_workers,
                     check_cancel=lambda: self._check_cancel(job),
-                    on_progress=self._azure_progress_callback(job, disk, meter, written_before),
+                    on_progress=self._cloud_progress_callback(job, disk, meter, written_before),
                     refresh=lambda: export.refresh(disk.index),
                 )
-                self._record_azure_progress(job, disk, stats.bytes_received, stats.bytes_written,
+                self._record_cloud_progress(job, disk, stats.bytes_received, stats.bytes_written,
                                             stats.chunks_written, meter.rate(), written_before)
                 disk.percent = 100
                 disk.throughput_bps = 0.0
@@ -811,19 +755,21 @@ class MigrationRunner:
                     stats = copy_from_gcs_export_tarball(
                         client, bucket, obj, writer, expected_bytes=total,
                         check_cancel=lambda: self._check_cancel(job),
-                        on_progress=self._azure_progress_callback(job, disk, meter, written_before),
+                        on_progress=self._cloud_progress_callback(job, disk, meter, written_before),
                     )
                 else:
-                    total = min(disk.capacity_bytes, object_size(client, bucket, obj))
+                    total = object_size(client, bucket, obj)
+                    if total != disk.capacity_bytes:
+                        raise GcsCopyError(f"raw export size {total} does not match disk size {disk.capacity_bytes}")
                     disk.stream_bytes = total
                     self._save(job, message=f"Copying {label} to {disk.device}: {total:,} bytes from gs://{bucket}/{obj}")
-                    stats = copy_sequential(
+                    stats = copy_parallel_ranges(
                         client, bucket, obj, writer, total_bytes=total,
                         chunk_bytes=self.s.gcp_range_chunk_bytes, workers=self.s.gcp_range_workers,
                         check_cancel=lambda: self._check_cancel(job),
-                        on_progress=self._azure_progress_callback(job, disk, meter, written_before),
+                        on_progress=self._cloud_progress_callback(job, disk, meter, written_before),
                     )
-                self._record_azure_progress(job, disk, stats.bytes_received, stats.bytes_written,
+                self._record_cloud_progress(job, disk, stats.bytes_received, stats.bytes_written,
                                             stats.chunks_written, meter.rate(), written_before)
                 disk.percent = 100
                 disk.status = DiskStatus.COPIED
@@ -945,9 +891,9 @@ class MigrationRunner:
                     client, snap, blocks, block_size, writer, disk.capacity_bytes,
                     workers=self.s.aws_range_workers,
                     check_cancel=lambda: self._check_cancel(job),
-                    on_progress=self._azure_progress_callback(job, disk, meter, written_before),
+                    on_progress=self._cloud_progress_callback(job, disk, meter, written_before),
                 )
-                self._record_azure_progress(job, disk, stats.bytes_received, stats.bytes_written,
+                self._record_cloud_progress(job, disk, stats.bytes_received, stats.bytes_written,
                                             stats.chunks_written, meter.rate(), written_before)
                 disk.percent = 100
                 disk.throughput_bps = 0.0

@@ -1,0 +1,27 @@
+name: Validate repository
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.12']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install -c helper/constraints.txt -e "./helper[dev]"
+      - run: python -m ruff check helper
+      - run: python -m pytest helper/tests -q
+      - run: node --check helper/helper_app/ui/app.js
+      - run: python helper/tools/check_repository.py

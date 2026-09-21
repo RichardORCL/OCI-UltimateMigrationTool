@@ -11,6 +11,7 @@ from urllib.parse import urlencode
 import httpx
 
 from helper_app.aws.sigv4 import sign_headers
+from helper_app.redaction import redact
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ STS_API_VERSION = "2011-06-15"
 
 class AwsError(Exception):
     def __init__(self, message: str, *, status: int = 0, code: str = ""):
-        super().__init__(message)
+        super().__init__(redact(message))
         self.status = status
         self.code = code
 

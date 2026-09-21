@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from helper_app.gcp.client import parse_service_account_json
-from tests.fake_gcp import FakeGcp, PROJECT, SA_JSON, _FakeGcpClient
+from tests.fake_gcp import PROJECT, SA_JSON, FakeGcp, _FakeGcpClient
 
 
 def test_default_compute_sa_uses_default_service_account_not_legacy_id():

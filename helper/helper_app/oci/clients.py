@@ -10,6 +10,7 @@ from typing import Any, Callable, Iterable
 import httpx
 
 from helper_app.config import Settings
+from helper_app.redaction import redact
 
 log = logging.getLogger(__name__)
 
@@ -35,12 +36,12 @@ def describe_error(exc: BaseException) -> str:
             parts.append(f"endpoint {exc.request_endpoint}")
         if exc.request_id:
             parts.append(f"opc-request-id {exc.request_id}")
-        return " | ".join(parts)
+        return redact(" | ".join(parts))
     vsphere = _describe_vsphere_fault(exc)
     if vsphere:
-        return vsphere
+        return redact(vsphere)
     text = str(exc) or exc.__class__.__name__
-    return text if text != str(exc.__class__) else exc.__class__.__name__
+    return redact(text if text != str(exc.__class__) else exc.__class__.__name__)
 
 
 def _describe_vsphere_fault(exc: BaseException) -> str:
@@ -171,8 +172,9 @@ def build_clients(settings: Settings) -> OciClients:
         kwargs = {"config": config}
     else:
         raise OciError(f"unsupported HELPER_OCI_AUTH={settings.oci_auth}")
-    if settings.oci_log_requests:
-        config["log_requests"] = True  # SDK dumps every request/response (headers + bodies) at DEBUG
+    # SDK log_requests enables unfiltered http.client stdout dumps. Enable only its filtered
+    # Python loggers after construction (logging_config.apply), never raw wire logging.
+    config["log_requests"] = False
 
     retry = oci.retry.DEFAULT_RETRY_STRATEGY
     return OciClients(

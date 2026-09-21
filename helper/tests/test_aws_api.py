@@ -53,7 +53,6 @@ def test_aws_vm_list_and_inspect(env):
     assert {v["name"] for v in vms} >= {"lin-01", "win-01", "store-01", "market-01"}
     lin = next(v for v in vms if v["name"] == "lin-01")
     assert lin["power_state"] == "poweredOn" and lin["vm_size"] == "t3.medium"
-    listed = len([r for r in env.aws.requests if "DescribeInstances" in r or r.endswith("/")])
     c.get("/api/aws/vms")
     c.get("/api/aws/vms?refresh=true")
 
@@ -93,3 +92,28 @@ def test_aws_migration_snapshot_mode(env):
     inst = next(i for i in env.aws.instances.values() if i.name == "lin-01")
     assert inst.state == "running"
     assert not env.aws.snapshots
+
+
+def test_aws_cleanup_can_retry_after_anonymous_cancellation(env):
+    from helper_app.jobs.store import utcnow
+    from helper_app.models import AwsSourceInfo, Job, JobPhase
+
+    from .test_api import wait_until
+
+    now = utcnow()
+    snapshot = "snap-cleanup-test"
+    env.aws.snapshots[snapshot] = next(iter(env.aws.volumes.values()))
+    env.store.put(Job(id="retry-aws", kind="aws", phase=JobPhase.FAILED, target=target(),
+                      aws=AwsSourceInfo(account_id=ACCOUNT, region=REGION, instance_id="i-test",
+                                        snapshot_ids=[snapshot]), created_at=now, updated_at=now))
+    c = env.client
+    anonymous(c)
+    assert c.post("/api/jobs/retry-aws/cancel").status_code == 202
+    wait_until(lambda: "left behind" in env.store.get("retry-aws").message, what="AWS cleanup note")
+    wait_until(lambda: not env.app.state.runner.is_running("retry-aws"), what="cleanup idle")
+    assert snapshot in env.aws.snapshots
+    assert env.store.get("retry-aws").phase == JobPhase.CANCELLED
+    aws_login(c)
+    assert c.post("/api/jobs/retry-aws/cancel").status_code == 202
+    wait_until(lambda: not env.store.get("retry-aws").aws.snapshot_ids, what="AWS snapshots released")
+    assert snapshot not in env.aws.snapshots

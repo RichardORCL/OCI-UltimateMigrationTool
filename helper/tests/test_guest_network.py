@@ -11,13 +11,13 @@ import pytest
 from helper_app.guest import network
 from helper_app.guest.initramfs import CmdResult, Skip
 from helper_app.guest.network import (
-    WAIT_ONLINE_DROPIN,
     BACKUP_SUFFIX,
     FIRSTBOOT_SCRIPT,
     FIRSTBOOT_UNIT,
     NETPLAN_FILE,
     NETWORKD_FILE,
     NM_KEYFILE,
+    WAIT_ONLINE_DROPIN,
     NetworkFixer,
 )
 

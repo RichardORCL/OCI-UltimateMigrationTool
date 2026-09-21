@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+from contextlib import closing
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -41,11 +42,12 @@ def read_object_bytes(c: OciClients, namespace: str, bucket: str, object_name: s
     data = resp.data
     stream = open_object_stream(data)
     parts: list[bytes] = []
-    while True:
-        block = stream.read(CHUNK)
-        if not block:
-            break
-        parts.append(block if isinstance(block, (bytes, bytearray)) else bytes(block))
+    with closing(stream):
+        while True:
+            block = stream.read(CHUNK)
+            if not block:
+                break
+            parts.append(block if isinstance(block, (bytes, bytearray)) else bytes(block))
     if parts:
         return b"".join(parts)
 

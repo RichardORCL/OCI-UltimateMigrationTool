@@ -16,6 +16,8 @@ from urllib.parse import quote
 
 import httpx
 
+from helper_app.redaction import redact
+
 log = logging.getLogger(__name__)
 
 ARM_BASE = "https://management.azure.com"
@@ -57,7 +59,7 @@ class AzureError(RuntimeError):
     """An Azure API call failed (network, HTTP status, or an ARM error body)."""
 
     def __init__(self, message: str, code: str = "", status: Optional[int] = None):
-        super().__init__(message)
+        super().__init__(redact(message))
         self.code = code
         self.status = status
 

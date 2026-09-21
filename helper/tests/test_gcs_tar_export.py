@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import io
-import tarfile
-
 from helper_app.disk.gcs_range_copy import copy_from_gcs_export_tarball
 from helper_app.gcp.client import parse_service_account_json
-from tests.fake_gcp import BUCKET, FakeGcp, SA_JSON, _FakeGcpClient
+from tests.fake_gcp import BUCKET, SA_JSON, FakeGcp, _FakeGcpClient
 
 
 class _BufWriter:

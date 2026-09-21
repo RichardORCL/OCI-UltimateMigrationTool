@@ -1086,8 +1086,8 @@ kms:CreateGrant</pre>
             <small>Level of the Migration Tool's own messages in the service journal.</small>
           </label>
           <label class="check"><input type="checkbox" name="oci_log_requests"> Log OCI API requests and responses</label>
-          <small>Dumps every OCI SDK call including headers and bodies. Very verbose; use it to analyse
-            <em>InvalidParameter</em> and similar errors, then switch it off again.</small>
+          <small>Enables redacted OCI SDK diagnostics. Raw HTTP dumps are disabled to protect credentials.
+            Logs still contain resource names and identifiers; review them before sharing.</small>
           <div class="actions">
             <span id="log-result" class="muted"></span>
             <button type="submit" class="primary" id="log-save">Save</button>

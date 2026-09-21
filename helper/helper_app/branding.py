@@ -38,9 +38,6 @@ TAG_SOURCE_AWS = tag_key("source-aws")
 TAG_SOURCE_ISO = tag_key("source-iso")
 TAG_SOURCE_DETAILS = tag_key("source-details")
 
-# Terraform defined-tag namespace (same string as the freeform prefix root).
-TAG_NAMESPACE = PREFIX
-
 SEED_BUCKET_DEFAULT = f"{PREFIX}-seed-images"
 SEED_DISPLAY_PREFIX = f"{PREFIX}-seed"
 ISO_DISPLAY_PREFIX = f"{PREFIX}-iso"

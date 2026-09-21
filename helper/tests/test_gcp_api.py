@@ -12,12 +12,18 @@ GCP_LOGIN = {"service_account_json": SA_JSON, "export_bucket": BUCKET}
 
 
 @pytest.fixture
-def env(tmp_path, fast_retries):
+def env(tmp_path, fast_retries, monkeypatch):
     sizes = {0: 2 * 1024**2, 1: 1024**2}
     from .test_vmdk_stream import make_raw
 
     raws = {i: make_raw(s, seed=10 + i) for i, s in sizes.items()}
     gcp = make_fleet(raws)
+    from helper_app.gcp import inventory
+
+    # Scale the API's GiB unit to MiB in this test, preserving exact logical-size validation.
+    monkeypatch.setattr(inventory, "GIB", 1024**2)
+    for disk in gcp.disks.values():
+        disk.size_gb = len(disk.data) // 1024**2
     e = Env(tmp_path, gcp=gcp)
     with TestClient(e.app) as client:
         e.client = client

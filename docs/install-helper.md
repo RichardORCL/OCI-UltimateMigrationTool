@@ -140,6 +140,9 @@ config directory and restart the service.
 
 ## Configuration reference
 
+The complete generated list of environment variables and defaults is in
+[configuration-defaults.md](configuration-defaults.md). The table below explains the common settings.
+
 Settings use the `HELPER_` environment prefix. They are written by the stack; the *Setup* page can
 override logging, concurrency and the session timeout at runtime.
 
@@ -158,6 +161,14 @@ override logging, concurrency and the session timeout at runtime.
 | `HELPER_AZURE_RANGE_CHUNK_BYTES` | `8388608` | Azure: size of one range request |
 | `HELPER_AZURE_DEALLOCATE_TIMEOUT_S` | `900` | Azure deallocate mode: how long to wait for the VM to deallocate |
 | `HELPER_AZURE_SNAPSHOT_TIMEOUT_S` | `900` | Azure snapshot mode: how long to wait for each snapshot |
+| `HELPER_AWS_STOP_TIMEOUT_S` | `900` | AWS: Stop timeout |
+| `HELPER_AWS_SNAPSHOT_TIMEOUT_S` | `900` | AWS: Snapshot timeout |
+| `HELPER_AWS_RANGE_WORKERS` | `4` | AWS: Concurrent EBS reads |
+| `HELPER_GCP_STOP_TIMEOUT_S` | `900` | Google Cloud: Stop timeout |
+| `HELPER_GCP_SNAPSHOT_TIMEOUT_S` | `900` | Google Cloud: Snapshot timeout |
+| `HELPER_GCP_EXPORT_TIMEOUT_S` | `7200` | Google Cloud: Cloud Build export timeout |
+| `HELPER_GCP_RANGE_WORKERS` | `4` | Google Cloud: Concurrent raw-object range reads |
+| `HELPER_GCP_RANGE_CHUNK_BYTES` | `8388608` | Google Cloud: Raw-object range chunk size |
 | `HELPER_SESSION_TTL_S` | `28800` | Idle timeout of web sessions (5 min - 7 days); changeable on *Setup* |
 | `HELPER_COOKIE_SECURE` | `true` | Set `false` only for plain-HTTP development |
 | `HELPER_MAX_CONCURRENT_JOBS` | `2` | Migrations copying disks at the same time (1-16, further jobs queue); changeable on *Setup* |
@@ -176,9 +187,9 @@ override logging, concurrency and the session timeout at runtime.
 | `HELPER_DB_PATH` | on the Migration Tool VM | Job database |
 | `HELPER_TLS_CERT_FILE` / `HELPER_TLS_KEY_FILE` | – | TLS material for 8443 |
 | `HELPER_LOG_LEVEL` | `INFO` | Migration Tool log level (service journal); changeable on *Setup* |
-| `HELPER_OCI_LOG_REQUESTS` | `false` | Dump every OCI SDK request/response including bodies; changeable on *Setup* |
+| `HELPER_OCI_LOG_REQUESTS` | `false` | Redacted OCI SDK diagnostics; raw HTTP dumps disabled; changeable on *Setup* |
 | `HELPER_RUNTIME_SETTINGS_PATH` | on the Migration Tool VM | Where *Setup* page changes are persisted |
-| `HELPER_UI_PASSWORD_HASH_PATH` | on the Migration Tool VM | Optional web UI password (scrypt hash). Missing/empty = no lock. Offered on first use and changeable on *Setup* |
+| `HELPER_UI_PASSWORD_HASH_PATH` | on the Migration Tool VM | Optional web UI password (scrypt hash). Missing = no lock; unreadable/empty files fail closed. Offered on first use and changeable on *Setup* |
 | `HELPER_UPDATE_SOURCE_DIR` / `HELPER_UPDATE_VENV_DIR` | on the Migration Tool VM | Git checkout and virtualenv used by the self-update |
 | `HELPER_UPDATE_SERVICE` / `HELPER_UPDATE_LOG_PATH` | the Migration Tool service / the update log | service restarted after an update; update log shown in the UI |
 

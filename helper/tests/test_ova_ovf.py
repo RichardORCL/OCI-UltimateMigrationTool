@@ -6,7 +6,7 @@ import pytest
 from helper_app.disk import vmdk_stream as vs
 from helper_app.oci.mapping import map_ovf_description, normalize_os_version_for_oci
 from helper_app.oci.object_bytes import open_object_stream, read_object_bytes
-from helper_app.ova.ovf import OvfParseError, boot_disk_index, inspect_ovf, parse_ovf, prepare_ovf_bytes
+from helper_app.ova.ovf import OvfParseError, boot_disk_index, inspect_ovf, parse_ovf
 from helper_app.ova.package import OvaPackageError, inspect_ova_object, parse_and_stage, read_ovf_from_object
 
 
@@ -50,6 +50,7 @@ def test_read_object_bytes_oci_stream_only():
     from types import SimpleNamespace
 
     from helper_app.config import get_settings
+
     from .fake_oci import FakeOci
 
     payload = _minimal_ovf()
@@ -57,7 +58,6 @@ def test_read_object_bytes_oci_stream_only():
     fake.object_storage.add_bucket("OVA")
     fake.object_storage.bucket_objects["OVA"] = {"stream.ovf": payload}
 
-    stream = io.BytesIO(payload)
 
     class ClientWrap:
         def __init__(self, inner):
@@ -72,7 +72,7 @@ def test_read_object_bytes_oci_stream_only():
 
             class OSWrap:
                 def get_object(self, namespace, bucket, name, **kw):
-                    resp = os.get_object(namespace, bucket, name, **kw)
+                    os.get_object(namespace, bucket, name, **kw)
                     return SimpleNamespace(
                         data=SimpleNamespace(content=None, raw=SimpleNamespace(stream=io.BytesIO(payload)))
                     )
@@ -186,6 +186,7 @@ def test_normalize_os_version_windows_and_linux():
 
 def test_read_standalone_ovf_object():
     from helper_app.config import get_settings
+
     from .fake_oci import FakeOci
 
     fake = FakeOci(get_settings().device_prefix)
@@ -202,6 +203,7 @@ def test_read_standalone_ovf_object():
 
 def test_parse_and_stage_standalone_ovf():
     from helper_app.config import get_settings
+
     from .fake_oci import FakeOci
 
     fake = FakeOci(get_settings().device_prefix)
@@ -223,6 +225,7 @@ def test_parse_and_stage_standalone_ovf():
 
 def test_read_ovf_and_inspect_ova_object():
     from helper_app.config import get_settings
+
     from .fake_oci import FakeOci
 
     fake = FakeOci(get_settings().device_prefix)
@@ -243,6 +246,7 @@ def test_read_ovf_and_inspect_ova_object():
 
 def test_parse_and_stage_ova():
     from helper_app.config import get_settings
+
     from .fake_oci import FakeOci
 
     fake = FakeOci(get_settings().device_prefix)
@@ -274,6 +278,7 @@ def make_raw_small() -> bytes:
 
 def test_parse_and_stage_missing_ova():
     from helper_app.config import get_settings
+
     from .fake_oci import FakeOci
 
     fake = FakeOci(get_settings().device_prefix)

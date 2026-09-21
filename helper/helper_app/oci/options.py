@@ -47,13 +47,15 @@ def check_private_ip(c: OciClients, subnet_id: str, ip: str) -> None:
         raise PrivateIpError(f"{ip} is not inside the CIDR {cidr} of subnet {subnet.display_name or subnet_id}")
     reserved = {net.network_address, net.network_address + 1, net.broadcast_address}
     if addr in reserved:
-        raise PrivateIpError(f"{ip} is reserved by OCI in {cidr} (network address, default gateway and broadcast "
-                             "cannot be assigned)")
+        raise PrivateIpError(
+            f"{ip} is reserved by OCI in {cidr} (network address, default gateway and broadcast cannot be assigned)"
+        )
     used = _all(c.network.list_private_ips, subnet_id=subnet_id, ip_address=ip)
     if used:
         owner = getattr(used[0], "hostname_label", None) or getattr(used[0], "display_name", None)
-        raise PrivateIpError(f"{ip} is already in use in subnet {subnet.display_name or subnet_id}"
-                             + (f" (by {owner})" if owner else ""))
+        raise PrivateIpError(
+            f"{ip} is already in use in subnet {subnet.display_name or subnet_id}" + (f" (by {owner})" if owner else "")
+        )
 
 
 def primary_vnic_ips(c: OciClients, instance) -> tuple[Optional[str], Optional[str]]:
@@ -95,25 +97,32 @@ def list_compartments(c: OciClients) -> list[OciCompartment]:
                 parent = by_id.get(parent.compartment_id)
             return "/".join(reversed(parts))
 
-        result.extend(sorted((OciCompartment(id=x.id, name=x.name, path=path_of(x)) for x in comps),
-                             key=lambda x: x.path.lower()))
+        result.extend(
+            sorted((OciCompartment(id=x.id, name=x.name, path=path_of(x)) for x in comps), key=lambda x: x.path.lower())
+        )
     else:
         result.append(OciCompartment(id=c.identity_info.compartment_id, name="(migration tool compartment)"))
     return result
 
 
 def list_availability_domains(c: OciClients) -> list[str]:
-    ads = _all(c.identity.list_availability_domains, compartment_id=c.identity_info.tenancy_id or
-               c.identity_info.compartment_id)
+    ads = _all(
+        c.identity.list_availability_domains,
+        compartment_id=c.identity_info.tenancy_id or c.identity_info.compartment_id,
+    )
     return [a.name for a in ads]
 
 
 def list_vcns(c: OciClients, compartment_id: str) -> list[OciVcn]:
     vcns = _all(c.network.list_vcns, compartment_id=compartment_id, lifecycle_state="AVAILABLE")
     result = [
-        OciVcn(id=v.id, name=v.display_name,
-               cidr_blocks=list(getattr(v, "cidr_blocks", None) or ([v.cidr_block] if getattr(v, "cidr_block", None)
-                                                                     else [])))
+        OciVcn(
+            id=v.id,
+            name=v.display_name,
+            cidr_blocks=list(
+                getattr(v, "cidr_blocks", None) or ([v.cidr_block] if getattr(v, "cidr_block", None) else [])
+            ),
+        )
         for v in vcns
     ]
     return sorted(result, key=lambda v: v.name.lower())
@@ -186,8 +195,15 @@ def list_buckets(c: OciClients, compartment_id: str) -> list[OciBucket]:
     namespace = object_storage_namespace(c)
     buckets = _all(c.object_storage.list_buckets, namespace_name=namespace, compartment_id=compartment_id)
     return sorted(
-        (OciBucket(name=b.name, namespace=namespace, compartment_id=compartment_id,
-                   time_created=getattr(b, "time_created", None)) for b in buckets),
+        (
+            OciBucket(
+                name=b.name,
+                namespace=namespace,
+                compartment_id=compartment_id,
+                time_created=getattr(b, "time_created", None),
+            )
+            for b in buckets
+        ),
         key=lambda b: b.name.lower(),
     )
 
@@ -201,8 +217,12 @@ def list_ova_objects(c: OciClients, bucket: str, prefix: Optional[str] = None) -
     listed = _all(c.object_storage.list_objects, **kwargs)
     objects = getattr(listed, "objects", listed)
     result = [
-        OciObject(name=o.name, size_bytes=int(getattr(o, "size", 0) or 0), etag=getattr(o, "etag", "") or "",
-                  time_modified=getattr(o, "time_modified", None))
+        OciObject(
+            name=o.name,
+            size_bytes=int(getattr(o, "size", 0) or 0),
+            etag=getattr(o, "etag", "") or "",
+            time_modified=getattr(o, "time_modified", None),
+        )
         for o in objects
         if o.name.lower().endswith((".ova", ".vmdk", ".ovf"))
     ]
@@ -219,9 +239,14 @@ def list_iso_objects(c: OciClients, bucket: str, prefix: Optional[str] = None) -
     # the SDK aggregates ListObjects pages into one ListObjects wrapper (``.objects``), not into a plain list
     objects = getattr(listed, "objects", listed)
     result = [
-        OciObject(name=o.name, size_bytes=int(getattr(o, "size", 0) or 0), etag=getattr(o, "etag", "") or "",
-                  time_modified=getattr(o, "time_modified", None))
-        for o in objects if o.name.lower().endswith(".iso")
+        OciObject(
+            name=o.name,
+            size_bytes=int(getattr(o, "size", 0) or 0),
+            etag=getattr(o, "etag", "") or "",
+            time_modified=getattr(o, "time_modified", None),
+        )
+        for o in objects
+        if o.name.lower().endswith(".iso")
     ]
     return sorted(result, key=lambda o: o.name.lower())
 
@@ -231,7 +256,9 @@ def _validate_upload_object_name(name: str) -> None:
         raise ValueError(f"invalid object name {name!r}")
 
 
-def create_object_upload_par(c: OciClients, bucket: str, object_name: str, content_type: str = "application/octet-stream"):
+def create_object_upload_par(
+    c: OciClients, bucket: str, object_name: str, content_type: str = "application/octet-stream"
+):
     """Create a pre-authenticated request for uploading one object."""
     from datetime import datetime, timedelta, timezone
 
@@ -262,23 +289,40 @@ def create_object_upload_par(c: OciClients, bucket: str, object_name: str, conte
 _INSTANCE_GONE = ("TERMINATED", "TERMINATING")
 
 
-def list_instances(c: OciClients, compartment_id: str, compartment_paths: Optional[dict[str, str]] = None,
-                   jobs_by_instance: Optional[dict[str, str]] = None) -> list[OciInstance]:
+def list_instances(
+    c: OciClients,
+    compartment_id: str,
+    compartment_paths: Optional[dict[str, str]] = None,
+    jobs_by_instance: Optional[dict[str, str]] = None,
+) -> list[OciInstance]:
     """Compute instances of a compartment (terminated ones left out) for the Remote Console page."""
     paths, jobs = compartment_paths or {}, jobs_by_instance or {}
     instances = _all(c.compute.list_instances, compartment_id=compartment_id)
     result = [
-        OciInstance(id=i.id, name=i.display_name or i.id, compartment_id=i.compartment_id,
-                    compartment_path=paths.get(i.compartment_id, ""), lifecycle_state=i.lifecycle_state,
-                    shape=getattr(i, "shape", None), availability_domain=getattr(i, "availability_domain", None),
-                    time_created=getattr(i, "time_created", None), job_id=jobs.get(i.id))
-        for i in instances if i.lifecycle_state not in _INSTANCE_GONE
+        OciInstance(
+            id=i.id,
+            name=i.display_name or i.id,
+            compartment_id=i.compartment_id,
+            compartment_path=paths.get(i.compartment_id, ""),
+            lifecycle_state=i.lifecycle_state,
+            shape=getattr(i, "shape", None),
+            availability_domain=getattr(i, "availability_domain", None),
+            time_created=getattr(i, "time_created", None),
+            job_id=jobs.get(i.id),
+        )
+        for i in instances
+        if i.lifecycle_state not in _INSTANCE_GONE
     ]
     return sorted(result, key=lambda i: i.name.lower())
 
 
-def search_instances(c: OciClients, name: str, compartment_paths: Optional[dict[str, str]] = None,
-                     jobs_by_instance: Optional[dict[str, str]] = None, limit: int = 200) -> list[OciInstance]:
+def search_instances(
+    c: OciClients,
+    name: str,
+    compartment_paths: Optional[dict[str, str]] = None,
+    jobs_by_instance: Optional[dict[str, str]] = None,
+    limit: int = 200,
+) -> list[OciInstance]:
     """Instances whose display name contains ``name`` (case-insensitive), across every compartment the
     migration tool may see, through the OCI Resource Search service (structured query)."""
     import oci.resource_search.models as SM
@@ -288,16 +332,24 @@ def search_instances(c: OciClients, name: str, compartment_paths: Optional[dict[
     if not needle:
         return []
     query = f"query instance resources where displayName =~ '{needle}'"
-    details = SM.StructuredSearchDetails(query=query, type="Structured",
-                                         matching_context_type=SM.SearchDetails.MATCHING_CONTEXT_TYPE_NONE)
+    details = SM.StructuredSearchDetails(
+        query=query, type="Structured", matching_context_type=SM.SearchDetails.MATCHING_CONTEXT_TYPE_NONE
+    )
     found = c.search.search_resources(details, limit=limit).data
     items = getattr(found, "items", None) or []
     result = [
-        OciInstance(id=r.identifier, name=r.display_name or r.identifier, compartment_id=r.compartment_id,
-                    compartment_path=paths.get(r.compartment_id, ""), lifecycle_state=r.lifecycle_state or "",
-                    availability_domain=getattr(r, "availability_domain", None),
-                    time_created=getattr(r, "time_created", None), job_id=jobs.get(r.identifier))
-        for r in items if (r.lifecycle_state or "") not in _INSTANCE_GONE
+        OciInstance(
+            id=r.identifier,
+            name=r.display_name or r.identifier,
+            compartment_id=r.compartment_id,
+            compartment_path=paths.get(r.compartment_id, ""),
+            lifecycle_state=r.lifecycle_state or "",
+            availability_domain=getattr(r, "availability_domain", None),
+            time_created=getattr(r, "time_created", None),
+            job_id=jobs.get(r.identifier),
+        )
+        for r in items
+        if (r.lifecycle_state or "") not in _INSTANCE_GONE
     ]
     return sorted(result, key=lambda i: (i.name.lower(), i.compartment_path.lower()))
 

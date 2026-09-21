@@ -356,9 +356,6 @@ def test_azure_failed_job_cleanup_releases_sas_with_a_later_login(tmp_path, fast
         assert "lin-01_OsDisk" in job["message"]
         assert job["azure"]["sas_granted"] == [vm.os_disk.id] and vm.os_disk.sas_token
         # the same from an Azure session releases them
-        job_rec = store.get("stale-az")
-        job_rec.phase = JobPhase.FAILED
-        store.put(job_rec)
         azure_login(c)
         assert c.post("/api/jobs/stale-az/cancel").status_code == 202
         wait_phase(c, "stale-az", "CANCELLED")

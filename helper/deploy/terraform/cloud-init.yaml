@@ -47,7 +47,7 @@ write_files:
       git -C "$SRC" pull --ff-only || true
       [ -d "$VENV" ] || python3.11 -m venv "$VENV"
       "$VENV/bin/pip" install --upgrade pip
-      "$VENV/bin/pip" install "$SRC/helper"
+      "$VENV/bin/pip" install -c "$SRC/helper/constraints.txt" "$SRC/helper"
 
   - path: /etc/systemd/system/vc-oci-helper.service
     permissions: "0644"

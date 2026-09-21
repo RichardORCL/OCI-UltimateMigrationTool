@@ -745,8 +745,8 @@
     kv(root.querySelector("[data-migration]"), rows);
 
     const cancelBtn = root.querySelector("[data-cancel]");
-    cancelBtn.hidden = job.phase === "COMPLETED" || job.phase === "CANCELLED";
-    cancelBtn.textContent = job.phase === "FAILED" ? "Clean up OCI resources" : job.phase === "INSTALLING" ? "Cancel and terminate instance" : "Cancel";
+    cancelBtn.hidden = job.phase === "COMPLETED";
+    cancelBtn.textContent = job.phase === "CANCELLED" ? "Retry cleanup" : job.phase === "FAILED" ? "Clean up OCI resources" : job.phase === "INSTALLING" ? "Cancel and terminate instance" : "Cancel";
     cancelBtn.onclick = async () => {
       const what = ovaExport ? "Cancel this export? The boot volume is reattached; data volumes stay on the source instance, which is left stopped. Objects already written to the bucket are kept."
         : iso ? "Cancel this installation? The OCI instance and its boot volume will be terminated (the imported ISO image is kept)."
@@ -935,13 +935,7 @@
 
     // folder / guest OS dropdowns are built from the inventory; the current choice survives a refresh
     const fillFilters = () => {
-      const fill = (sel, values, all) => {
-        const previous = sel.value;
-        sel.innerHTML = "";
-        sel.append(el("option", { value: "" }, all));
-        for (const v of values) sel.append(el("option", { value: v }, v));
-        sel.value = values.includes(previous) ? previous : "";
-      };
+      const fill = fillFilterSelect;
       const uniq = (list) => [...new Set(list)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
       fill(folderSel, uniq(vms.map((vm) => vm.folder || "(no folder)")), `All folders (${new Set(vms.map((vm) => vm.folder || "(no folder)")).size})`);
       fill(osSel, uniq(vms.map(osOf)), `All guest OSes (${new Set(vms.map(osOf)).size})`);
@@ -1016,6 +1010,13 @@
   // ------------------------------------------------------------ Azure VM list
   // same shape as vmsView: the rows come from GET /api/azure/vms (all subscriptions the principal can read),
   // grouped by subscription / resource group ("folder" in the summary) instead of vCenter folders
+  function fillFilterSelect(sel, values, all) {
+    const previous = sel.value;
+    sel.replaceChildren(el("option", { value: "" }, all));
+    for (const value of values) sel.append(el("option", { value }, value));
+    sel.value = values.includes(previous) ? previous : "";
+  }
+
   async function azureVmsView() {
     app.innerHTML = "";
     app.append(tpl("tpl-azure-vms"));
@@ -1030,13 +1031,7 @@
     const groupOf = (vm) => vm.folder || "(unknown)";
 
     const fillFilters = () => {
-      const fill = (sel, values, all) => {
-        const previous = sel.value;
-        sel.innerHTML = "";
-        sel.append(el("option", { value: "" }, all));
-        for (const v of values) sel.append(el("option", { value: v }, v));
-        sel.value = values.includes(previous) ? previous : "";
-      };
+      const fill = fillFilterSelect;
       const uniq = (list) => [...new Set(list)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
       fill(groupSel, uniq(vms.map(groupOf)), `All resource groups (${new Set(vms.map(groupOf)).size})`);
       fill(osSel, uniq(vms.map(osOf)), `All guest OSes (${new Set(vms.map(osOf)).size})`);
@@ -1096,101 +1091,30 @@
     await load(false);
   }
 
-  async function gcpVmsView() {
-    app.innerHTML = "";
-    app.append(tpl("tpl-gcp-vms"));
-    const rows = document.getElementById("gcpvm-rows");
-    const filter = document.getElementById("gcpvm-filter");
-    const groupSel = document.getElementById("gcpvm-group");
-    const osSel = document.getElementById("gcpvm-os");
-    const count = document.getElementById("gcpvm-count");
-    const err = document.getElementById("gcpvm-error");
-    let vms = [];
-    const osOf = (vm) => vm.guest_full_name || vm.guest_id || "(unknown)";
-    const groupOf = (vm) => vm.folder || "(unknown)";
-    const fillFilters = () => {
-      const fill = (sel, values, all) => {
-        const previous = sel.value;
-        sel.innerHTML = "";
-        sel.append(el("option", { value: "" }, all));
-        for (const v of values) sel.append(el("option", { value: v }, v));
-        sel.value = values.includes(previous) ? previous : "";
-      };
-      const uniq = (list) => [...new Set(list)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-      fill(groupSel, uniq(vms.map(groupOf)), `All locations (${new Set(vms.map(groupOf)).size})`);
-      fill(osSel, uniq(vms.map(osOf)), `All guest OSes (${new Set(vms.map(osOf)).size})`);
-    };
-    const matches = (vm) => {
-      if (groupSel.value && groupOf(vm) !== groupSel.value) return false;
-      if (osSel.value && osOf(vm) !== osSel.value) return false;
-      const q = filter.value.trim().toLowerCase();
-      return !q || `${vm.name} ${vm.folder} ${vm.guest_full_name} ${vm.vm_size} ${vm.location}`.toLowerCase().includes(q);
-    };
-    const render = () => {
-      const filtered = vms.filter(matches);
-      rows.innerHTML = "";
-      for (const vm of filtered) {
-        const job = state.jobsByVm[vm.moid];
-        const active = job && !TERMINAL.includes(job.phase);
-        const block = ["starting", "stopping"];
-        const exportable = !block.includes(vm.power_state);
-        const why = block.includes(vm.power_state) ? `The VM is ${vm.power_state}: wait until it is running or stopped`
-          : vm.power_state === "poweredOn" ? "The VM is running: it is stopped before export, or use snapshot mode"
-            : "";
-        rows.append(el("tr", {},
-          el("td", { class: "name", title: vm.moid }, vm.name),
-          el("td", { class: "muted" }, vm.folder || "-"),
-          el("td", {}, el("span", { class: "power " + vm.power_state }, vm.power_state.replace("powered", "").toLowerCase())),
-          el("td", {}, vm.guest_full_name || vm.guest_id || "-"),
-          el("td", {}, vm.vm_size || "-"),
-          el("td", { class: "muted" }, vm.location || "-"),
-          el("td", {}, `${vm.num_disks}`),
-          el("td", {}, job ? el("a", { href: `#/jobs/${job.id}`, class: "phase " + job.phase }, job.phase) : el("span", { class: "muted" }, "-")),
-          el("td", {}, active
-            ? el("a", { href: `#/jobs/${job.id}`, class: "button secondary small" }, "View job")
-            : el("a", { href: `#/gcp/export/${encodeURIComponent(vm.moid)}`, class: "button primary small" + (exportable ? "" : " disabled"), title: why }, "Migrate"))));
-      }
-      if (!filtered.length) rows.append(el("tr", {}, el("td", { colspan: 9, class: "muted" }, vms.length ? "No virtual machines match the filters." : "No virtual machines found in the projects this service account can read.")));
-      count.textContent = filtered.length === vms.length ? `${vms.length} virtual machines` : `${filtered.length} of ${vms.length} virtual machines`;
-    };
-    const load = async (refresh) => {
-      err.textContent = ""; count.textContent = "Loading Google Cloud inventory...";
-      try {
-        const [list, jobs] = await Promise.all([api("GET", "/gcp/vms" + (refresh ? "?refresh=true" : "")), api("GET", "/jobs")]);
-        vms = list;
-        state.jobsByVm = {};
-        for (const j of jobs) if (j.vm && !state.jobsByVm[j.vm.moid]) state.jobsByVm[j.vm.moid] = j;
-        fillFilters();
-        render();
-      } catch (e) { if (e.status !== 401) err.textContent = e.message; count.textContent = ""; }
-    };
-    filter.addEventListener("input", render);
-    groupSel.addEventListener("change", render);
-    osSel.addEventListener("change", render);
-    document.getElementById("gcpvm-refresh").addEventListener("click", () => load(true));
-    await load(false);
-  }
+  const CLOUD_INVENTORY = {
+    gcp: { label: "Google Cloud", noun: "VM", plural: "virtual machines", blocked: ["starting", "stopping"],
+      empty: "No virtual machines found in the projects this service account can read." },
+    aws: { label: "EC2", noun: "instance", plural: "instances", blocked: ["pending", "stopping", "shutting-down"],
+      empty: "No instances found in this region." },
+  };
+  const gcpVmsView = () => cloudVmsView("gcp");
+  const awsVmsView = () => cloudVmsView("aws");
 
-  async function awsVmsView() {
+  async function cloudVmsView(provider) {
+    const config = CLOUD_INVENTORY[provider];
     app.innerHTML = "";
-    app.append(tpl("tpl-aws-vms"));
-    const rows = document.getElementById("awsvm-rows");
-    const filter = document.getElementById("awsvm-filter");
-    const groupSel = document.getElementById("awsvm-group");
-    const osSel = document.getElementById("awsvm-os");
-    const count = document.getElementById("awsvm-count");
-    const err = document.getElementById("awsvm-error");
+    app.append(tpl(`tpl-${provider}-vms`));
+    const rows = document.getElementById(`${provider}vm-rows`);
+    const filter = document.getElementById(`${provider}vm-filter`);
+    const groupSel = document.getElementById(`${provider}vm-group`);
+    const osSel = document.getElementById(`${provider}vm-os`);
+    const count = document.getElementById(`${provider}vm-count`);
+    const err = document.getElementById(`${provider}vm-error`);
     let vms = [];
     const osOf = (vm) => vm.guest_full_name || vm.guest_id || "(unknown)";
     const groupOf = (vm) => vm.folder || "(unknown)";
     const fillFilters = () => {
-      const fill = (sel, values, all) => {
-        const previous = sel.value;
-        sel.innerHTML = "";
-        sel.append(el("option", { value: "" }, all));
-        for (const v of values) sel.append(el("option", { value: v }, v));
-        sel.value = values.includes(previous) ? previous : "";
-      };
+      const fill = fillFilterSelect;
       const uniq = (list) => [...new Set(list)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
       fill(groupSel, uniq(vms.map(groupOf)), `All locations (${new Set(vms.map(groupOf)).size})`);
       fill(osSel, uniq(vms.map(osOf)), `All guest OSes (${new Set(vms.map(osOf)).size})`);
@@ -1207,10 +1131,10 @@
       for (const vm of filtered) {
         const job = state.jobsByVm[vm.moid];
         const active = job && !TERMINAL.includes(job.phase);
-        const block = ["pending", "stopping", "shutting-down"];
+        const block = config.blocked;
         const exportable = !block.includes(vm.power_state) && vm.power_state !== "terminated";
-        const why = block.includes(vm.power_state) ? `The instance is ${vm.power_state}: wait until it is running or stopped`
-          : vm.power_state === "poweredOn" ? "The instance is running: it is stopped before export, or use snapshot mode"
+        const why = block.includes(vm.power_state) ? `The ${config.noun} is ${vm.power_state}: wait until it is running or stopped`
+          : vm.power_state === "poweredOn" ? `The ${config.noun} is running: it is stopped before export, or use snapshot mode`
             : "";
         rows.append(el("tr", {},
           el("td", { class: "name", title: vm.moid }, vm.name),
@@ -1223,15 +1147,15 @@
           el("td", {}, job ? el("a", { href: `#/jobs/${job.id}`, class: "phase " + job.phase }, job.phase) : el("span", { class: "muted" }, "-")),
           el("td", {}, active
             ? el("a", { href: `#/jobs/${job.id}`, class: "button secondary small" }, "View job")
-            : el("a", { href: `#/aws/export/${encodeURIComponent(vm.moid)}`, class: "button primary small" + (exportable ? "" : " disabled"), title: why }, "Migrate"))));
+            : el("a", { href: `#/${provider}/export/${encodeURIComponent(vm.moid)}`, class: "button primary small" + (exportable ? "" : " disabled"), title: why }, "Migrate"))));
       }
-      if (!filtered.length) rows.append(el("tr", {}, el("td", { colspan: 9, class: "muted" }, vms.length ? "No instances match the filters." : "No instances found in this region.")));
-      count.textContent = filtered.length === vms.length ? `${vms.length} instances` : `${filtered.length} of ${vms.length} instances`;
+      if (!filtered.length) rows.append(el("tr", {}, el("td", { colspan: 9, class: "muted" }, vms.length ? `No ${config.plural} match the filters.` : config.empty)));
+      count.textContent = filtered.length === vms.length ? `${vms.length} ${config.plural}` : `${filtered.length} of ${vms.length} ${config.plural}`;
     };
     const load = async (refresh) => {
-      err.textContent = ""; count.textContent = "Loading EC2 inventory...";
+      err.textContent = ""; count.textContent = `Loading ${config.label} inventory...`;
       try {
-        const [list, jobs] = await Promise.all([api("GET", "/aws/vms" + (refresh ? "?refresh=true" : "")), api("GET", "/jobs")]);
+        const [list, jobs] = await Promise.all([api("GET", `/${provider}/vms` + (refresh ? "?refresh=true" : "")), api("GET", "/jobs")]);
         vms = list;
         state.jobsByVm = {};
         for (const j of jobs) if (j.vm && !state.jobsByVm[j.vm.moid]) state.jobsByVm[j.vm.moid] = j;
@@ -1242,7 +1166,7 @@
     filter.addEventListener("input", render);
     groupSel.addEventListener("change", render);
     osSel.addEventListener("change", render);
-    document.getElementById("awsvm-refresh").addEventListener("click", () => load(true));
+    document.getElementById(`${provider}vm-refresh`).addEventListener("click", () => load(true));
     await load(false);
   }
 

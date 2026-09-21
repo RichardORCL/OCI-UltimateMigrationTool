@@ -5,11 +5,10 @@ from __future__ import annotations
 import gzip
 import logging
 import tarfile
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
 from typing import Callable, Iterator, Optional
 
+from helper_app.disk.copy_common import CopyStats as GcsCopyStats
+from helper_app.disk.copy_common import run_workers
 from helper_app.disk.writer import PositionalWriter
 from helper_app.gcp.client import GcpClient, GcpError
 
@@ -21,24 +20,6 @@ DEFAULT_RETRIES = 3
 
 class GcsCopyError(RuntimeError):
     pass
-
-
-@dataclass
-class GcsCopyStats:
-    bytes_received: int = 0
-    bytes_written: int = 0
-    chunks_written: int = 0
-    retries: int = 0
-    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
-
-    def add(self, received: int, written: Optional[int] = None) -> None:
-        if written is None:
-            written = received
-        with self._lock:
-            self.bytes_received += received
-            self.bytes_written += written
-            if written:
-                self.chunks_written += 1
 
 
 class _StreamByteReader:
@@ -91,6 +72,10 @@ def copy_from_gcs_export_tarball(
                     base = member.name.rsplit("/", 1)[-1]
                     if base != "disk.raw":
                         continue
+                    if not member.isfile() or member.size != expected_bytes:
+                        raise GcsCopyError(
+                            f"disk.raw logical size {member.size} does not match expected {expected_bytes} bytes"
+                        )
                     found = True
                     extracted = tar.extractfile(member)
                     if extracted is None:
@@ -116,10 +101,7 @@ def copy_from_gcs_export_tarball(
                 if not found:
                     raise GcsCopyError(f"export tarball gs://{bucket}/{object_name} has no disk.raw member")
     if stats.bytes_received < expected_bytes:
-        log.warning(
-            "gs://%s/%s disk.raw streamed %s bytes, expected %s (trailing zeros may be implicit)",
-            bucket, object_name, stats.bytes_received, expected_bytes,
-        )
+        raise GcsCopyError(f"disk.raw streamed {stats.bytes_received} bytes, expected {expected_bytes}")
     return stats
 
 
@@ -131,7 +113,7 @@ def object_size(client: GcpClient, bucket: str, object_name: str) -> int:
     return size
 
 
-def copy_sequential(
+def copy_parallel_ranges(
     client: GcpClient,
     bucket: str,
     object_name: str,
@@ -144,33 +126,30 @@ def copy_sequential(
     on_progress: Optional[Callable[[int], None]] = None,
 ) -> GcsCopyStats:
     stats = GcsCopyStats()
-    ranges: list[tuple[int, int]] = []
-    pos = 0
-    while pos < total_bytes:
-        end = min(total_bytes - 1, pos + chunk_bytes - 1)
-        ranges.append((pos, end))
-        pos = end + 1
+    if chunk_bytes <= 0 or total_bytes < 0:
+        raise ValueError("chunk_bytes must be positive and total_bytes nonnegative")
+    ranges = ((pos, min(total_bytes - 1, pos + chunk_bytes - 1))
+              for pos in range(0, total_bytes, chunk_bytes))
 
     def one_range(start: int, end: int) -> None:
         if check_cancel:
             check_cancel()
         last: Optional[Exception] = None
-        for attempt in range(1, DEFAULT_RETRIES + 1):
+        for _attempt in range(1, DEFAULT_RETRIES + 1):
             try:
                 data = client.object_get_range(bucket, object_name, start, end)
+                if len(data) != end - start + 1:
+                    raise GcsCopyError(f"range {start}-{end} returned {len(data)} bytes")
                 writer.write_at(start, data)
                 stats.add(len(data))
                 if on_progress:
                     on_progress(len(data))
                 return
-            except (GcpError, OSError) as exc:
+            except (GcpError, GcsCopyError, OSError) as exc:
                 last = exc
                 with stats._lock:
                     stats.retries += 1
         raise GcsCopyError(f"range {start}-{end}: {last}") from last
 
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        futs = [pool.submit(one_range, s, e) for s, e in ranges]
-        for f in as_completed(futs):
-            f.result()
+    run_workers(ranges, lambda bounds: one_range(*bounds), workers=workers, check_cancel=check_cancel)
     return stats

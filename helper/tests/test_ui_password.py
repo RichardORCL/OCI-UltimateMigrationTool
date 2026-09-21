@@ -26,12 +26,11 @@ def test_hash_round_trip_does_not_store_plaintext(tmp_path):
     assert store.verify("") is False
 
 
-def test_empty_hash_file_means_open(tmp_path):
+def test_empty_hash_file_fails_closed(tmp_path):
     path = tmp_path / "ui-password.hash"
     path.write_text("\n", encoding="utf-8")
-    store = UiPasswordStore(str(path))
-    assert store.required is False
-    assert store.verify("s3cret!!") is False
+    with pytest.raises(RuntimeError, match="Empty UI password hash"):
+        UiPasswordStore(str(path))
 
 
 def test_reload_from_disk(tmp_path):
