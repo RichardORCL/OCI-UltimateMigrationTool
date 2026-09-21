@@ -45,6 +45,8 @@ Without a UI password, anyone who can reach the UI can create an anonymous sessi
 resources within the tool VM's IAM scope. All unlocked sessions share that authority; source login does
 not isolate jobs by user. Configure a password on first use and restrict access to administrators.
 
+![Start page of the OCI Ultimate Migration Tool](Screenshot.png)
+
 ## Networking
 
 The tool VM is meant to run in a private subnet without a public IP. Its subnet needs a route to OCI
