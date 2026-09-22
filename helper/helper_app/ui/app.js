@@ -249,16 +249,29 @@
     const azure = hasAzure(me);
     const gcp = hasGcp(me);
     const aws = hasAws(me);
-    const who = userBox.querySelector("[data-username]");
+    let who = userBox.querySelector("[data-username]");
     const subs = azure ? (me.azure_subscriptions || []).map((s) => s.name || s.id) : [];
-    who.textContent = anonymous ? "not logged in"
+    const label = anonymous ? "not logged in"
       : gcp ? `GCP: ${me.gcp_export_bucket || me.gcp_project_id}`
         : azure ? `Azure: ${subs.length ? subs.slice(0, 2).join(", ") + (subs.length > 2 ? ` +${subs.length - 2}` : "") : me.azure_tenant_id}`
           : aws ? `AWS: ${me.aws_account_id} (${me.aws_region})`
             : `${me.username} @ ${me.vcenter_host}${me.vcenter_port && me.vcenter_port !== 443 ? ":" + me.vcenter_port : ""}`;
-    who.title = gcp ? `service account ${me.gcp_client_email}\nexport bucket: ${me.gcp_export_bucket}`
+    const detailTitle = gcp ? `service account ${me.gcp_client_email}\nexport bucket: ${me.gcp_export_bucket}`
       : azure ? `service principal ${me.azure_client_id} in tenant ${me.azure_tenant_id}${subs.length ? `\nsubscriptions: ${subs.join(", ")}` : ""}`
         : aws ? `IAM ${me.aws_access_key_id}\naccount ${me.aws_account_id} / ${me.aws_region}` : "";
+    const inventoryHash = anonymous ? null
+      : gcp ? "#/gcp/vms"
+        : azure ? "#/azure/vms"
+          : aws ? "#/aws/vms"
+            : "#/vms";
+    const next = inventoryHash
+      ? el("a", {
+        href: inventoryHash, "data-username": "",
+        class: "user-inventory",
+        title: detailTitle ? `${detailTitle}\nOpen VM inventory` : "Open VM inventory",
+      }, label)
+      : el("span", { "data-username": "", title: detailTitle || null }, label);
+    who.replaceWith(next);
   }
 
   // the session is gone (401 from the API: expired, or the service restarted): back to the start page, where
