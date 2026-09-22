@@ -55,7 +55,10 @@ def test_aws_cloud_fixer_adjusts_guest(tmp_path):
     status, detail = AwsCloudFixer(root, notes.append).apply()
     assert status == "done"
     assert not (root / "etc/cloud/cloud.cfg.d/90-amazon.cfg").exists()
-    assert (root / "etc/cloud/cloud.cfg.d" / CLOUD_CFG_DROPIN).exists()
+    dropin = (root / "etc/cloud/cloud.cfg.d" / CLOUD_CFG_DROPIN).read_text()
+    # first AL2023 boot in OCI logged "Could not import DataSourceOracleCloud": not a cloud-init datasource
+    assert "OracleCloud" not in dropin and "Oracle," in dropin
+    assert "ssh_deletekeys: false" in dropin  # keep the server's SSH host keys across the move
     assert not (root / "etc/systemd/system/multi-user.target.wants/amazon-ssm-agent.service").exists()
 
 

@@ -17,7 +17,9 @@ from helper_app.guest.initramfs import Skip
 CLOUD_CFG_DROPIN = f"99-{PREFIX}-after-azure.cfg"
 CLOUD_CFG_TEXT = """# added by the OCI Ultimate Migration Tool after migration from Azure
 # Prefer OCI metadata; do not wait on the Azure instance metadata service.
-datasource_list: [ Oracle, OracleCloud, NoCloud, ConfigDrive, None ]
+datasource_list: [ Oracle, NoCloud, ConfigDrive, None ]
+# the migrated server keeps its SSH host identity (cloud-init sees a new instance-id after the move)
+ssh_deletekeys: false
 """
 
 WantsScan = tuple[str, ...]  # unit name fragments under *.wants
