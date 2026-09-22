@@ -110,12 +110,28 @@ class InitramfsFixer:
             device, initramfs=True, network=False, notify=notify).initramfs
 
 
-def initramfs_outcome(kernels: list[str], rebuilt: list[str], notes: list[str]) -> GuestFixup:
+def amazon_modules_extra_package(ver: str) -> str:
+    """Amazon Linux 2023 packages virtio_scsi in kernel-modules-extra for its default 6.1 kernel and in
+    kernel6.12-modules-extra / kernel6.18-modules-extra for the alternative kernel flavours."""
+    m = re.match(r"(\d+)\.(\d+)\.", ver)
+    if m and (m.group(1), m.group(2)) != ("6", "1"):
+        return f"kernel{m.group(1)}.{m.group(2)}-modules-extra"
+    return "kernel-modules-extra"
+
+
+def initramfs_outcome(kernels: list[str], rebuilt: list[str], notes: list[str],
+                      unfixable: Optional[dict[str, list[str]]] = None) -> GuestFixup:
+    unfixable = unfixable or {}
+    tail = ""
+    if unfixable:
+        parts = [f"kernel {ver} has no {', '.join(names)} driver" for ver, names in unfixable.items()]
+        tail = f"; {'; '.join(parts)} and was left as is (boot the other kernel)"
     if not rebuilt:
+        good = len(kernels) - len(unfixable)
         return GuestFixup(status="not_needed", kernels=[], log=notes,
-                          detail=f"initramfs of {len(kernels)} kernel(s) already contains virtio drivers")
+                          detail=f"initramfs of {good} kernel(s) already contains virtio drivers{tail}")
     return GuestFixup(status="done", kernels=rebuilt, log=notes,
-                      detail=f"initramfs rebuilt with virtio drivers for {', '.join(rebuilt)}")
+                      detail=f"initramfs rebuilt with virtio drivers for {', '.join(rebuilt)}{tail}")
 
 
 class _Session:
@@ -134,6 +150,7 @@ class _Session:
         self.mounts: list[Path] = []  # mounted paths, unmounted in reverse order
         self.vgs: list[str] = []  # guest volume groups we activated
         self.boot_problem: Optional[str] = None  # why a separate /boot could not be mounted (initramfs step skips)
+        self.unfixable: dict[str, list[str]] = {}  # kernels whose initramfs cannot get the drivers: {ver: [names]}
         # LVM must look at this disk only (and ignore the helper's devices file, which does not list it)
         self.lvm_config = ("devices { use_devicesfile=0 filter=[ "
                            f'"a|^{re.escape(self.real)}.*|", "r|.*|" ] }}')
@@ -309,8 +326,13 @@ class _Session:
         # dracut only warns (and exits 0) when an add_drivers module does not exist; check ourselves first
         unavailable = {ver: self.missing_boot_drivers(ver) for ver, _ in todo}
         unavailable = {ver: names for ver, names in unavailable.items() if names}
-        if unavailable:
-            raise Fail(self.missing_driver_message(unavailable))
+        if unavailable and len(unavailable) == len(kernels):
+            raise Fail(self.missing_driver_message(unavailable))  # no installed kernel can boot in OCI
+        for ver, names in unavailable.items():
+            self.note(f"kernel {ver}: this kernel does not ship {', '.join(names)} - initramfs left as is "
+                      "(another installed kernel has the drivers; make sure it is the default boot entry)")
+        self.unfixable = unavailable
+        todo = [(ver, img) for ver, img in todo if ver not in unavailable]
 
         conf_dir = self.mnt / "etc" / "dracut.conf.d"
         conf_dir.mkdir(parents=True, exist_ok=True)
@@ -582,8 +604,10 @@ class _Session:
         msg = (f"kernel {kernels} has no {', '.join(names)} driver - the OCI paravirtualized boot volume is a "
                f"virtio-scsi disk, so the guest cannot find its root file system without it")
         if "amazon linux" in self.os_pretty_name().lower():
-            return (msg + "; Amazon Linux ships it in the kernel-modules-extra package: run "
-                    "'sudo dnf install -y kernel-modules-extra-$(uname -r)' on the source instance, then migrate again")
+            pkgs = sorted({amazon_modules_extra_package(ver) for ver in unavailable})
+            return (msg + f"; Amazon Linux ships it in the {', '.join(pkgs)} package: run "
+                    f"'sudo dnf install -y {' '.join(pkgs)}' on the source instance (check the kernel package name "
+                    "with rpm -qa 'kernel*'), then migrate again")
         return msg + "; install the kernel package that provides it in the source VM, then migrate again"
 
     def check_boot_space(self, img: Path) -> None:

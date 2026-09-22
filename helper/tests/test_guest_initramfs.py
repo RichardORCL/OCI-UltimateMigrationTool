@@ -30,7 +30,8 @@ class FakeShell:
                  modules_missing=(), builtin=(), os_release=None):
         self.layout = layout
         self.partial_virtio = set(partial_virtio)  # kernels whose initramfs has virtio_blk/net but no virtio_scsi
-        self.modules_missing = set(modules_missing)  # driver names absent from the guest's /lib/modules
+        # driver names absent from the guest's /lib/modules: a set (all kernels) or {kernel: set}
+        self.modules_missing = modules_missing if isinstance(modules_missing, dict) else set(modules_missing)
         self.builtin = set(builtin)  # driver names listed in modules.builtin instead of shipped as .ko
         self.os_release = os_release  # override the guest's /etc/os-release PRETTY_NAME
         self.udev_stale = udev_stale  # lsblk shows the LVs but without FSTYPE (udev has not probed them)
@@ -173,13 +174,18 @@ class FakeShell:
                    "virtio_blk": "kernel/drivers/block", "virtio_net": "kernel/drivers/net",
                    "vmw_pvscsi": "kernel/drivers/scsi"}
         for name, sub in shipped.items():
-            if name in self.modules_missing or name in self.builtin:
+            if name in self.missing_for(mod_dir.name) or name in self.builtin:
                 continue
             (mod_dir / sub).mkdir(parents=True, exist_ok=True)
             (mod_dir / sub / f"{name}.ko.xz").write_text("elf")
         (mod_dir / "modules.builtin").write_text(
             "kernel/drivers/virtio/virtio.ko\nkernel/drivers/virtio/virtio_ring.ko\n"
             + "".join(f"kernel/drivers/{n}.ko\n" for n in self.builtin))
+
+    def missing_for(self, ver: str) -> set:
+        if isinstance(self.modules_missing, dict):
+            return set(self.modules_missing.get(ver, ()))
+        return self.modules_missing
 
     def fill_usr(self, usr: Path):
         for ver in (RHEL_KERNEL, OLD_KERNEL):
@@ -313,7 +319,7 @@ class FakeShell:
                 assert ("--no-hostonly" in argv) is (not self.old_dracut)
                 img.write_text(f"generic image {ver}\nusr/lib/modules/x/kernel/drivers/block/virtio_blk.ko.xz\n"
                                "usr/lib/modules/x/kernel/drivers/virtio/virtio_pci.ko.xz\n"
-                               + ("" if "virtio_scsi" in self.modules_missing or "virtio_scsi" in self.builtin
+                               + ("" if "virtio_scsi" in self.missing_for(ver) or "virtio_scsi" in self.builtin
                                   else "usr/lib/modules/x/kernel/drivers/scsi/virtio_scsi.ko.xz\n"))
                 self.rebuilt.append(ver)
                 return CmdResult(0, "", "")
@@ -454,8 +460,28 @@ def test_amazon_linux_without_virtio_scsi_module_fails_with_package_hint(base):
     result, msgs = run(shell, base)
     assert result.status == "failed", result
     assert "virtio_scsi" in result.detail and RHEL_KERNEL in result.detail
-    assert "kernel-modules-extra" in result.detail and "dnf install" in result.detail
+    assert "modules-extra" in result.detail and "dnf install" in result.detail
     assert shell.rebuilt == []  # no point running dracut
+
+
+def test_amazon_modules_extra_package_name():
+    """AL2023 job d45e6be1 ran the kernel6.18 flavour: 'kernel-modules-extra-$(uname -r)' does not exist."""
+    from helper_app.guest.initramfs import amazon_modules_extra_package
+    assert amazon_modules_extra_package("6.18.48-109.150.amzn2023.x86_64") == "kernel6.18-modules-extra"
+    assert amazon_modules_extra_package("6.12.20-30.100.amzn2023.x86_64") == "kernel6.12-modules-extra"
+    assert amazon_modules_extra_package("6.1.186-228.376.amzn2023.x86_64") == "kernel-modules-extra"
+
+
+def test_newer_kernel_with_virtio_scsi_is_rebuilt_while_old_one_is_reported(base):
+    """After 'dnf install kernel kernel-modules-extra' on AL2023 two kernels are installed: the old one
+    still has no virtio_scsi, the new (default) one does.  Rebuild what can boot, say what cannot."""
+    shell = FakeShell(layout="plain", boot_fstab="", modules_missing={OLD_KERNEL: {"virtio_scsi"}},
+                      os_release="Amazon Linux 2023.12.20260918")
+    result, msgs = run(shell, base)
+    assert result.status == "done", result
+    assert shell.rebuilt == [RHEL_KERNEL] and result.kernels == [RHEL_KERNEL]
+    assert OLD_KERNEL in result.detail and "left as is" in result.detail and "virtio_scsi" in result.detail
+    assert any("left as is" in m and OLD_KERNEL in m for m in msgs)
 
 
 def test_missing_virtio_pci_module_fails_generically(base):
