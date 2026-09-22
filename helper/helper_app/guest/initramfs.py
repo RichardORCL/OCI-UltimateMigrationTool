@@ -37,6 +37,9 @@ from helper_app.models import GuestFixup
 log = logging.getLogger(__name__)
 
 VIRTIO_DRIVERS = "virtio virtio_pci virtio_ring virtio_blk virtio_scsi virtio_net"
+# What the guest must have to find its root disk in OCI: paravirtualized boot volumes are virtio-scsi disks
+# behind a virtio-pci transport.  virtio_blk/virtio_net alone (what many kernels ship by default) do not help.
+REQUIRED_BOOT_DRIVERS = ("virtio_pci", "virtio_scsi")
 DRACUT_CONF_NAME = "oci-virtio.conf"
 ROOT_FS_TYPES = {"xfs", "ext4", "ext3", "ext2"}
 # RHEL (and similar) often place /usr (kernel modules, dracut) on its own LV; mount these from fstab
@@ -292,11 +295,22 @@ class _Session:
 
         self.bind_system_dirs()
 
-        todo = [(ver, img) for ver, img in kernels if not self.has_virtio(img)]
+        todo = []
         for ver, img in kernels:
-            self.note(f"kernel {ver}: {img.name} {'lacks' if (ver, img) in todo else 'already has'} virtio drivers")
+            missing = self.missing_in_initramfs(img, ver)
+            if missing:
+                todo.append((ver, img))
+                self.note(f"kernel {ver}: {img.name} lacks virtio drivers ({', '.join(missing)})")
+            else:
+                self.note(f"kernel {ver}: {img.name} already has virtio drivers")
         if not todo:
             return [v for v, _ in kernels], []
+
+        # dracut only warns (and exits 0) when an add_drivers module does not exist; check ourselves first
+        unavailable = {ver: self.missing_boot_drivers(ver) for ver, _ in todo}
+        unavailable = {ver: names for ver, names in unavailable.items() if names}
+        if unavailable:
+            raise Fail(self.missing_driver_message(unavailable))
 
         conf_dir = self.mnt / "etc" / "dracut.conf.d"
         conf_dir.mkdir(parents=True, exist_ok=True)
@@ -317,8 +331,9 @@ class _Session:
                          "--add-drivers", VIRTIO_DRIVERS, rel, ver], timeout_s=DRACUT_TIMEOUT_S, ok=False)
             if r.returncode != 0:
                 raise Fail(f"dracut failed for kernel {ver} (rc {r.returncode}): {_tail(r.stderr or r.stdout)}")
-            if not self.has_virtio(img):
-                raise Fail(f"dracut finished for kernel {ver} but {img.name} still shows no virtio modules")
+            still_missing = self.missing_in_initramfs(img, ver)
+            if still_missing:
+                raise Fail(f"dracut finished for kernel {ver} but {img.name} still lacks {', '.join(still_missing)}")
             rebuilt.append(ver)
         self.sh(["sync"], ok=False)
         return [v for v, _ in kernels], rebuilt
@@ -502,12 +517,74 @@ class _Session:
                     break
         return result
 
-    def has_virtio(self, img: Path) -> bool:
+    # ------------------------------------------------------- driver availability
+    @staticmethod
+    def _module_file_pattern(name: str) -> re.Pattern:
+        # kernel/drivers/scsi/virtio_scsi.ko, .ko.xz, .ko.zst ... ('-' and '_' are interchangeable in names)
+        stem = re.escape(name).replace("_", "[_-]")
+        return re.compile(rf"(?:^|[/\s]){stem}\.ko(?:\.[A-Za-z0-9]+)?(?=\s|$)", re.M)
+
+    def modules_dir(self, ver: str) -> Optional[Path]:
+        return next((self.mnt / p / ver for p in ("lib/modules", "usr/lib/modules") if (self.mnt / p / ver).is_dir()),
+                    None)
+
+    def builtin_drivers(self, ver: str) -> set[str]:
+        """Driver names compiled into the kernel (``modules.builtin``): no .ko file exists for those."""
+        mod_dir = self.modules_dir(ver)
+        if mod_dir is None or not (mod_dir / "modules.builtin").is_file():
+            return set()
+        names = set()
+        for line in (mod_dir / "modules.builtin").read_text(errors="replace").splitlines():
+            base = line.strip().rsplit("/", 1)[-1]
+            if base.endswith(".ko"):
+                names.add(base[:-3].replace("-", "_"))
+        return names
+
+    def shipped_drivers(self, ver: str) -> set[str]:
+        """Driver names the guest kernel ``ver`` provides: .ko files under /lib/modules plus built-ins."""
+        names = self.builtin_drivers(ver)
+        mod_dir = self.modules_dir(ver)
+        if mod_dir is not None:
+            for p in mod_dir.rglob("*.ko*"):
+                if p.is_file() and ".ko" in p.name:
+                    names.add(p.name.split(".ko", 1)[0].replace("-", "_"))
+        return names
+
+    def missing_boot_drivers(self, ver: str) -> list[str]:
+        """Required drivers the guest kernel ``ver`` does not ship at all (neither as .ko nor built in)."""
+        shipped = self.shipped_drivers(ver)
+        return [name for name in REQUIRED_BOOT_DRIVERS if name not in shipped]
+
+    def missing_in_initramfs(self, img: Path, ver: str) -> list[str]:
+        """Required drivers not in the initramfs ``img`` (built-in drivers count as present)."""
         rel = "/" + str(img.relative_to(self.mnt)).replace(os.sep, "/")
         r = self.sh(["chroot", str(self.mnt), "lsinitrd", rel], timeout_s=120, ok=False)
         if r.returncode != 0:
-            return False  # no lsinitrd, or an image it cannot read: rebuild to be safe
-        return "virtio" in r.stdout
+            return list(REQUIRED_BOOT_DRIVERS)  # no lsinitrd, or an image it cannot read: rebuild to be safe
+        builtin = self.builtin_drivers(ver)
+        return [name for name in REQUIRED_BOOT_DRIVERS
+                if name not in builtin and not self._module_file_pattern(name).search(r.stdout)]
+
+    def os_pretty_name(self) -> str:
+        osr = self.mnt / "etc" / "os-release"
+        if not osr.is_file():
+            return ""
+        kv = {}
+        for line in osr.read_text(errors="replace").splitlines():
+            if "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                kv[k.strip()] = v.strip().strip('"').strip("'")
+        return kv.get("PRETTY_NAME") or kv.get("NAME") or ""
+
+    def missing_driver_message(self, unavailable: dict[str, list[str]]) -> str:
+        names = sorted({n for ns in unavailable.values() for n in ns})
+        kernels = ", ".join(unavailable)
+        msg = (f"kernel {kernels} has no {', '.join(names)} driver - the OCI paravirtualized boot volume is a "
+               f"virtio-scsi disk, so the guest cannot find its root file system without it")
+        if "amazon linux" in self.os_pretty_name().lower():
+            return (msg + "; Amazon Linux ships it in the kernel-modules-extra package: run "
+                    "'sudo dnf install -y kernel-modules-extra-$(uname -r)' on the source instance, then migrate again")
+        return msg + "; install the kernel package that provides it in the source VM, then migrate again"
 
     def check_boot_space(self, img: Path) -> None:
         try:

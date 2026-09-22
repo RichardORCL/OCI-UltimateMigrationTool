@@ -26,8 +26,13 @@ class FakeShell:
 
     def __init__(self, layout: str = "lvm", boot_fstab="UUID=boot-uuid", virtio_in=(), tools_running=True,
                  lvm_foreign_vgs=("ocivolume",), dracut=True, dracut_rc=0, fail_mount=(), old_dracut=False,
-                 udev_stale=False, lsblk_hides_lvs=False, blkid_fails=False):
+                 udev_stale=False, lsblk_hides_lvs=False, blkid_fails=False, partial_virtio=(),
+                 modules_missing=(), builtin=(), os_release=None):
         self.layout = layout
+        self.partial_virtio = set(partial_virtio)  # kernels whose initramfs has virtio_blk/net but no virtio_scsi
+        self.modules_missing = set(modules_missing)  # driver names absent from the guest's /lib/modules
+        self.builtin = set(builtin)  # driver names listed in modules.builtin instead of shipped as .ko
+        self.os_release = os_release  # override the guest's /etc/os-release PRETTY_NAME
         self.udev_stale = udev_stale  # lsblk shows the LVs but without FSTYPE (udev has not probed them)
         self.lsblk_hides_lvs = lsblk_hides_lvs  # lsblk does not list the LVs at all
         self.blkid_fails = blkid_fails  # blkid cannot classify LVs (seen on some Oracle Linux imports)
@@ -129,8 +134,7 @@ class FakeShell:
             + ("/dev/mapper/ol-swap swap swap defaults 0 0\n" if self.layout == "ol_lvm"
                else "/dev/mapper/rhel-swap swap swap defaults 0 0\n" if self.layout == "lvm" else ""))
         for ver in (RHEL_KERNEL, OLD_KERNEL):
-            (mnt / "lib" / "modules" / ver).mkdir(parents=True, exist_ok=True)
-            (mnt / "lib" / "modules" / ver / "modules.dep").write_text("")
+            self.fill_modules(mnt / "lib" / "modules" / ver)
         (mnt / "lib" / "modules" / "3.10.0-957.el7.x86_64").mkdir()  # removed kernel: no modules.dep
         if self.dracut:
             (mnt / "usr" / "bin").mkdir(parents=True, exist_ok=True)
@@ -138,7 +142,8 @@ class FakeShell:
         if not self.boot_fstab:  # /boot on the root fs
             self.fill_boot(mnt / "boot")
         # a RHEL 7 style network stack: NetworkManager enabled, profile bound to ens192
-        (mnt / "etc" / "os-release").write_text('PRETTY_NAME="Red Hat Enterprise Linux Server 7.9 (Maipo)"\n')
+        pretty = self.os_release or "Red Hat Enterprise Linux Server 7.9 (Maipo)"
+        (mnt / "etc" / "os-release").write_text(f'PRETTY_NAME="{pretty}"\n')
         (mnt / "usr" / "lib" / "systemd" / "system").mkdir(parents=True, exist_ok=True)
         (mnt / "usr" / "lib" / "systemd" / "system" / "NetworkManager.service").write_text("[Unit]")
         (mnt / "etc" / "systemd" / "system" / "multi-user.target.wants").mkdir(parents=True, exist_ok=True)
@@ -160,10 +165,25 @@ class FakeShell:
         (mnt / "etc" / "NetworkManager" / "system-connections" / "ens192.nmconnection").write_text(
             "[connection]\ntype=ethernet\ninterface-name=ens192\n[ipv4]\nmethod=manual\n")
 
+    def fill_modules(self, mod_dir: Path):
+        """/lib/modules/<ver> as a distro kernel package installs it (compressed .ko files, modules.builtin)."""
+        mod_dir.mkdir(parents=True, exist_ok=True)
+        (mod_dir / "modules.dep").write_text("")
+        shipped = {"virtio_pci": "kernel/drivers/virtio", "virtio_scsi": "kernel/drivers/scsi",
+                   "virtio_blk": "kernel/drivers/block", "virtio_net": "kernel/drivers/net",
+                   "vmw_pvscsi": "kernel/drivers/scsi"}
+        for name, sub in shipped.items():
+            if name in self.modules_missing or name in self.builtin:
+                continue
+            (mod_dir / sub).mkdir(parents=True, exist_ok=True)
+            (mod_dir / sub / f"{name}.ko.xz").write_text("elf")
+        (mod_dir / "modules.builtin").write_text(
+            "kernel/drivers/virtio/virtio.ko\nkernel/drivers/virtio/virtio_ring.ko\n"
+            + "".join(f"kernel/drivers/{n}.ko\n" for n in self.builtin))
+
     def fill_usr(self, usr: Path):
         for ver in (RHEL_KERNEL, OLD_KERNEL):
-            (usr / "lib" / "modules" / ver).mkdir(parents=True, exist_ok=True)
-            (usr / "lib" / "modules" / ver / "modules.dep").write_text("")
+            self.fill_modules(usr / "lib" / "modules" / ver)
         if self.dracut:
             (usr / "bin").mkdir(parents=True, exist_ok=True)
             (usr / "bin" / "dracut").write_text("#!/bin/bash\n")
@@ -174,8 +194,15 @@ class FakeShell:
         boot.mkdir(parents=True, exist_ok=True)
         for ver in (RHEL_KERNEL, OLD_KERNEL):
             (boot / f"vmlinuz-{ver}").write_text("kernel")
-            (boot / f"initramfs-{ver}.img").write_text(
-                "vmw_pvscsi.ko " + ("virtio_blk.ko" if ver in self.virtio_in else ""))
+            # lsinitrd-style listing; modules appear as (compressed) .ko files under usr/lib/modules
+            files = ["usr/lib/modules/x/kernel/drivers/scsi/vmw_pvscsi.ko.xz"]
+            if ver in self.virtio_in or ver in self.partial_virtio:
+                files += ["usr/lib/modules/x/kernel/drivers/virtio/virtio_pci.ko.xz",
+                          "usr/lib/modules/x/kernel/drivers/block/virtio_blk.ko.xz",
+                          "usr/lib/modules/x/kernel/drivers/net/virtio_net.ko.xz"]
+            if ver in self.virtio_in and "virtio_scsi" not in self.builtin:
+                files.append("usr/lib/modules/x/kernel/drivers/scsi/virtio_scsi.ko.xz")
+            (boot / f"initramfs-{ver}.img").write_text("\n".join(files) + "\n")
         (boot / "initramfs-0-rescue-abc.img").write_text("rescue")
 
     # -- command dispatcher
@@ -284,7 +311,10 @@ class FakeShell:
                 img, ver = root / argv[-2].lstrip("/"), argv[-1]
                 assert "--add-drivers" in argv and VIRTIO_DRIVERS in argv
                 assert ("--no-hostonly" in argv) is (not self.old_dracut)
-                img.write_text(f"generic image {ver} virtio_blk.ko virtio_scsi.ko")
+                img.write_text(f"generic image {ver}\nusr/lib/modules/x/kernel/drivers/block/virtio_blk.ko.xz\n"
+                               "usr/lib/modules/x/kernel/drivers/virtio/virtio_pci.ko.xz\n"
+                               + ("" if "virtio_scsi" in self.modules_missing or "virtio_scsi" in self.builtin
+                                  else "usr/lib/modules/x/kernel/drivers/scsi/virtio_scsi.ko.xz\n"))
                 self.rebuilt.append(ver)
                 return CmdResult(0, "", "")
         raise AssertionError(f"unexpected command {argv}")
@@ -403,6 +433,45 @@ def test_not_needed_when_virtio_present(base):
     result, _ = run(shell, base)
     assert result.status == "not_needed" and shell.rebuilt == []
     assert "2 kernel(s) already" in result.detail
+
+
+def test_initramfs_with_virtio_blk_but_no_virtio_scsi_is_rebuilt(base):
+    """The OCI boot volume is a virtio-scsi disk: virtio_blk/virtio_net alone (what dracut puts into a
+    generic image on many distros) is not enough.  'virtio' as a substring must not count as present."""
+    shell = FakeShell(layout="plain", boot_fstab="", partial_virtio={OLD_KERNEL, RHEL_KERNEL})
+    result, msgs = run(shell, base)
+    assert result.status == "done" and sorted(shell.rebuilt) == sorted([OLD_KERNEL, RHEL_KERNEL])
+    assert any("lacks virtio" in m for m in msgs)
+
+
+def test_amazon_linux_without_virtio_scsi_module_fails_with_package_hint(base):
+    """AL2023 job d45e6be1: the AMI kernel has virtio_pci/blk/net but ships virtio_scsi only in the
+    kernel-modules-extra package.  dracut silently built an image without it, the check passed on the
+    'virtio' substring, and the guest waited forever for its root disk.  Now: no dracut run, a failed step
+    with the fix spelled out."""
+    shell = FakeShell(layout="plain", boot_fstab="", modules_missing={"virtio_scsi"},
+                      os_release="Amazon Linux 2023.12.20260918")
+    result, msgs = run(shell, base)
+    assert result.status == "failed", result
+    assert "virtio_scsi" in result.detail and RHEL_KERNEL in result.detail
+    assert "kernel-modules-extra" in result.detail and "dnf install" in result.detail
+    assert shell.rebuilt == []  # no point running dracut
+
+
+def test_missing_virtio_pci_module_fails_generically(base):
+    shell = FakeShell(layout="plain", boot_fstab="", modules_missing={"virtio_pci"})
+    result, _ = run(shell, base)
+    assert result.status == "failed" and "virtio_pci" in result.detail
+    assert "kernel-modules-extra" not in result.detail  # not an Amazon Linux guest
+    assert "install" in result.detail and "migrate again" in result.detail
+
+
+def test_builtin_virtio_drivers_count_as_present(base):
+    """Kernels with CONFIG_SCSI_VIRTIO=y have no virtio_scsi.ko anywhere: modules.builtin says so."""
+    shell = FakeShell(layout="plain", boot_fstab="", builtin={"virtio_scsi"}, partial_virtio={OLD_KERNEL, RHEL_KERNEL})
+    result, _ = run(shell, base)
+    assert result.status == "not_needed", result
+    assert shell.rebuilt == []
 
 
 def test_skips(base):
