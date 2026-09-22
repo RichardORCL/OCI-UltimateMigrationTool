@@ -2173,9 +2173,12 @@
       const target = j.ova_export ? (j.ova_export.ovf_object || `${j.ova_export.bucket}/${j.ova_export.prefix || ""}`) : (j.instance_display_name || j.target.display_name || sourceName(j));
       const where = j.azure ? el("span", { class: "muted" }, ` (${j.azure.resource_group})`) : null;
       const type = sourceTypeLabel(j);
-      return el("td", { class: "name", title: j.azure ? `${type}: ${source} - ${j.azure.subscription_name || j.azure.subscription_id}/${j.azure.resource_group}` : `${type}: ${source}` },
-        el("span", { class: "badge source-type", title: "Source platform" }, type), " ",
-        source, where, el("span", { class: "muted arrow" }, " \u2192 "), el("span", { class: "muted" }, target));
+      return el("td", { class: "name", title: j.azure ? `${type}: ${source} \u2192 ${target} - ${j.azure.subscription_name || j.azure.subscription_id}/${j.azure.resource_group}` : `${type}: ${source} \u2192 ${target}` },
+        el("div", { class: "job-source" },
+          el("span", { class: "source-type-box", title: "Source platform" }, type),
+          el("div", { class: "job-source-path" },
+            el("div", { class: "job-source-from" }, source, where),
+            el("div", { class: "muted job-source-target" }, el("span", { class: "arrow" }, "\u2192 "), target))));
     };
     // start / end / duration / average transfer speed of the migration
     const migrationCell = (j) => {

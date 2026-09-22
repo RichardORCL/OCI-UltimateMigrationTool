@@ -160,8 +160,12 @@ table.jobs td.ocid { white-space: nowrap; overflow: hidden; text-overflow: ellip
 table.jobs td.ocid a { display: inline; }
 table.jobs td.row-actions { text-align: right; }
 table.jobs td.migration { font-size: 12px; line-height: 1.4; }
-table.jobs td.name > span { font-weight: 400; }  /* "source -> target": only the source name is bold */
-table.jobs td.name .badge.source-type { margin-right: 2px; vertical-align: baseline; font-size: 11px; }
+table.jobs td.name { vertical-align: top; }
+table.jobs .job-source { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; line-height: 1.35; }
+table.jobs .source-type-box { display: inline-block; padding: 4px 8px; border-radius: 3px; border: 1px solid #b8cfe0; background: #e8f2f8; color: var(--primary); font-size: 11px; font-weight: 600; line-height: 1.2; white-space: nowrap; }
+table.jobs .job-source-path { width: 100%; }
+table.jobs .job-source-target { margin-top: 2px; }
+table.jobs .job-source-target .arrow { margin-right: 2px; }
 @media (max-width: 900px) { table.jobs col.by, table.jobs th.by, table.jobs td.by { display: none; } }
 table.vms tr:hover td { background: #f7f9fa; }
 /* OCI Remote Console: instance picker (same look as jobs, hover like the VM list) */
