@@ -239,17 +239,28 @@
 
   // -------------------------------------------------------------------- auth
   // Top bar: home (always); Jobs, Setup, and Log off when there is a session (including anonymous).
-  function setUser(me) {
-    state.me = me;
-    nav.hidden = !me;
-    userBox.hidden = !me;
-    document.getElementById("logout-btn").hidden = !me;
+  const inventoryHashFor = (me) => {
+    if (!me || me.anonymous) return null;
+    if (hasGcp(me)) return "#/gcp/vms";
+    if (hasAzure(me)) return "#/azure/vms";
+    if (hasAws(me)) return "#/aws/vms";
+    if (hasVcenter(me)) return "#/vms";
+    return null;
+  };
+
+  const goInventory = (hash) => (ev) => {
+    ev.preventDefault();
+    if (location.hash !== hash) location.hash = hash;
+    else route().catch((e) => showError(e.message));
+  };
+
+  function paintUserBar() {
+    const me = state.me;
     if (!me) return;
     const anonymous = !!me.anonymous;
     const azure = hasAzure(me);
     const gcp = hasGcp(me);
     const aws = hasAws(me);
-    let who = userBox.querySelector("[data-username]");
     const subs = azure ? (me.azure_subscriptions || []).map((s) => s.name || s.id) : [];
     const label = anonymous ? "not logged in"
       : gcp ? `GCP: ${me.gcp_export_bucket || me.gcp_project_id}`
@@ -259,19 +270,30 @@
     const detailTitle = gcp ? `service account ${me.gcp_client_email}\nexport bucket: ${me.gcp_export_bucket}`
       : azure ? `service principal ${me.azure_client_id} in tenant ${me.azure_tenant_id}${subs.length ? `\nsubscriptions: ${subs.join(", ")}` : ""}`
         : aws ? `IAM ${me.aws_access_key_id}\naccount ${me.aws_account_id} / ${me.aws_region}` : "";
-    const inventoryHash = anonymous ? null
-      : gcp ? "#/gcp/vms"
-        : azure ? "#/azure/vms"
-          : aws ? "#/aws/vms"
-            : "#/vms";
+    const inventoryHash = inventoryHashFor(me);
+    let who = userBox.querySelector("[data-username]");
+    if (!who) {
+      who = el("span", { "data-username": "" });
+      userBox.append(who);
+    }
     const next = inventoryHash
       ? el("a", {
         href: inventoryHash, "data-username": "",
         class: "user-inventory",
         title: detailTitle ? `${detailTitle}\nOpen VM inventory` : "Open VM inventory",
+        onclick: goInventory(inventoryHash),
       }, label)
       : el("span", { "data-username": "", title: detailTitle || null }, label);
     who.replaceWith(next);
+  }
+
+  function setUser(me) {
+    state.me = me;
+    nav.hidden = !me;
+    userBox.hidden = !me;
+    document.getElementById("logout-btn").hidden = !me;
+    if (!me) return;
+    paintUserBar();
   }
 
   // the session is gone (401 from the API: expired, or the service restarted): back to the start page, where
@@ -2855,6 +2877,7 @@
         catch (e2) { showError(e2.message); return; }
       }
     }
+    paintUserBar();
     if (!state.region) {
       try {
         const h = await api("GET", "/health");
@@ -2891,6 +2914,7 @@
     if ((m = /^#\/jobs\/([^/]+)\/console$/.exec(hash))) return consoleView({ kind: "job", id: decodeURIComponent(m[1]) });
     if ((m = /^#\/jobs\/(.+)$/.exec(hash))) return jobDetailView(decodeURIComponent(m[1]));
     if (hash === "#/jobs") return jobsView();
+    if (hash === "#/vms") { if (anonymous || azure || gcp || aws) { location.hash = "#/login"; return; } return vmsView(); }
     if (hash === "#/setup") return setupView();
     // the Azure inventory and export form need an Azure login, the vSphere ones a vCenter login; the login
     // pages replace whatever session the browser has (a vCenter login cannot list Azure VMs and vice versa)

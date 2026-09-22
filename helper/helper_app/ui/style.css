@@ -25,7 +25,7 @@ h2 { font-size: 15px; margin: 0 0 8px; font-weight: 600; }
 .topbar nav a.topbar-icon, .topbar .topbar-logoff { padding: 6px 8px; }
 .topbar .topbar-logoff { background: transparent; border: 0; font: inherit; cursor: pointer; }
 .topbar .user { display: flex; gap: 10px; align-items: center; color: #cfd8dd; }
-.topbar .user a.user-inventory { color: inherit; text-decoration: none; padding: 6px 10px; border-radius: 3px; white-space: nowrap; }
+.topbar .user a.user-inventory { color: inherit; text-decoration: none; padding: 6px 10px; border-radius: 3px; white-space: nowrap; cursor: pointer; }
 .topbar .user a.user-inventory:hover { background: rgba(255,255,255,.12); color: #fff; }
 
 .app { padding: 16px; max-width: 1400px; margin: 0 auto; }
