@@ -224,14 +224,23 @@
     if (isAws(job)) return "AWS";
     return "VMware";
   };
+  const SVG_NS = "http://www.w3.org/2000/svg";
   const jobEndpointIcon = (role) => {
     const d = role === "source"
       ? "M20 18c1.1 0 1.99-.9 1.99-2L22 6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"
       : "M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z";
-    return el("svg", {
-      class: `job-source-icon job-source-icon-${role}`,
-      viewBox: "0 0 24 24", width: 14, height: 14, "aria-hidden": "true", focusable: "false",
-    }, el("path", { fill: "currentColor", d }));
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("class", `job-source-icon job-source-icon-${role}`);
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("width", "14");
+    svg.setAttribute("height", "14");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("fill", "currentColor");
+    path.setAttribute("d", d);
+    svg.append(path);
+    return svg;
   };
   // what the job was made from, for lists and titles: the VM's name, or the ISO's file name
   const sourceName = (job) => job.vm ? job.vm.name

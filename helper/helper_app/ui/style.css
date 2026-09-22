@@ -165,7 +165,7 @@ table.jobs .job-source { display: flex; flex-direction: column; align-items: fle
 table.jobs .job-source-line { width: 100%; overflow-wrap: anywhere; }
 table.jobs .job-source-line.job-source-vm,
 table.jobs .job-source-line.job-source-target { display: flex; align-items: flex-start; gap: 6px; }
-table.jobs .job-source-icon { flex-shrink: 0; margin-top: 2px; color: var(--muted); }
+table.jobs .job-source-icon { display: block; flex-shrink: 0; margin-top: 2px; color: var(--muted); }
 table.jobs .job-source-target .job-source-icon { color: var(--primary); opacity: .85; }
 table.jobs .job-source-text { min-width: 0; flex: 1; }
 table.jobs .source-type-box { display: inline-block; padding: 4px 8px; border-radius: 3px; border: 1px solid #b8cfe0; background: #e8f2f8; color: var(--primary); font-size: 11px; font-weight: 600; line-height: 1.2; white-space: nowrap; }
