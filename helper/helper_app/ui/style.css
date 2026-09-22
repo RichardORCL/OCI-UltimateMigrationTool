@@ -161,6 +161,7 @@ table.jobs td.ocid a { display: inline; }
 table.jobs td.row-actions { text-align: right; }
 table.jobs td.migration { font-size: 12px; line-height: 1.4; }
 table.jobs td.name > span { font-weight: 400; }  /* "source -> target": only the source name is bold */
+table.jobs td.name .badge.source-type { margin-right: 2px; vertical-align: baseline; font-size: 11px; }
 @media (max-width: 900px) { table.jobs col.by, table.jobs th.by, table.jobs td.by { display: none; } }
 table.vms tr:hover td { background: #f7f9fa; }
 /* OCI Remote Console: instance picker (same look as jobs, hover like the VM list) */

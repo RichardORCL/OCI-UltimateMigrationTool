@@ -215,6 +215,15 @@
   const isAzure = (job) => job.kind === "azure";
   const isGcp = (job) => job.kind === "gcp";
   const isAws = (job) => job.kind === "aws";
+  const sourceTypeLabel = (job) => {
+    if (isOvaExport(job)) return "OCI export";
+    if (isOva(job)) return "OVA";
+    if (isIso(job)) return "ISO";
+    if (isAzure(job)) return "Azure";
+    if (isGcp(job)) return "Google Cloud";
+    if (isAws(job)) return "AWS";
+    return "VMware";
+  };
   // what the job was made from, for lists and titles: the VM's name, or the ISO's file name
   const sourceName = (job) => job.vm ? job.vm.name
     : job.iso ? job.iso.object_name.split("/").pop()
@@ -2152,7 +2161,7 @@
       const q = search.value.trim().toLowerCase();
       const target = j.instance_display_name || j.target.display_name || "";
       const extra = j.iso ? j.iso.bucket : j.ova ? j.ova.bucket : j.ova_export ? `${j.ova_export.bucket} ${j.ova_export.prefix}` : j.azure ? `${j.azure.resource_group} ${j.azure.subscription_name}` : "";
-      return !q || `${sourceName(j)} ${extra} ${target}`.toLowerCase().includes(q);
+      return !q || `${sourceTypeLabel(j)} ${sourceName(j)} ${extra} ${target}`.toLowerCase().includes(q);
     };
 
     // fixed layout (see style.css): the message column takes what the others leave
@@ -2162,8 +2171,10 @@
     const vmCell = (j) => {
       const source = j.iso ? `${j.iso.bucket}/${j.iso.object_name}` : j.ova ? `${j.ova.bucket}/${j.ova.object_name}` : j.ova_export ? `${j.ova_export.instance_name || sourceName(j)} → ${j.ova_export.bucket}/${j.ova_export.prefix || ""}` : sourceName(j);
       const target = j.ova_export ? (j.ova_export.ovf_object || `${j.ova_export.bucket}/${j.ova_export.prefix || ""}`) : (j.instance_display_name || j.target.display_name || sourceName(j));
-      const where = j.azure ? el("span", { class: "muted" }, ` (Azure, ${j.azure.resource_group})`) : null;
-      return el("td", { class: "name", title: j.azure ? `${source} - ${j.azure.subscription_name || j.azure.subscription_id}/${j.azure.resource_group}` : source },
+      const where = j.azure ? el("span", { class: "muted" }, ` (${j.azure.resource_group})`) : null;
+      const type = sourceTypeLabel(j);
+      return el("td", { class: "name", title: j.azure ? `${type}: ${source} - ${j.azure.subscription_name || j.azure.subscription_id}/${j.azure.resource_group}` : `${type}: ${source}` },
+        el("span", { class: "badge source-type", title: "Source platform" }, type), " ",
         source, where, el("span", { class: "muted arrow" }, " \u2192 "), el("span", { class: "muted" }, target));
     };
     // start / end / duration / average transfer speed of the migration
