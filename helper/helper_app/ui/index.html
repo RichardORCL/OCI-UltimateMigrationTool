@@ -869,6 +869,29 @@ kms:CreateGrant</pre>
           If the drivers cannot be installed up front, tick <em>Maximum compatibility</em> below (IDE disk + E1000 NIC)
           and install them after the first boot in OCI.
         </div>
+        <div id="amazon-linux-note" class="callout important" hidden>
+          <strong>Before you migrate: run this inside the EC2 instance.</strong> OCI presents the boot volume as a
+          paravirtualized SCSI disk, so the kernel needs <code>virtio_scsi</code> and <code>sd_mod</code> in its
+          initramfs. Amazon Linux 2023 ships both in the <code>kernel-modules-extra</code> package
+          (<code>kernel6.12-</code>/<code>kernel6.18-modules-extra</code> for the alternative kernels), which the AMI
+          does not install; without it the copied instance never finds its disk in OCI. The commands below install the
+          package that matches the <em>running</em> kernel and list the two module files; the migration tool then
+          rebuilds the initramfs on the OCI copy. No reboot is needed. Amazon Linux 2 already has the modules; there
+          the script only runs the check.
+          <textarea class="log cmd" id="amazon-linux-cmds" readonly rows="10" spellcheck="false" aria-label="Commands to run inside the EC2 instance"># Amazon Linux: run inside the EC2 instance (SSH / Session Manager) before starting the migration
+. /etc/os-release
+if [ "$VERSION_ID" = "2023" ]; then
+  # kernel, kernel6.12 or kernel6.18 - whichever flavour the running kernel comes from
+  KERNEL_PKG=$(rpm -qf --queryformat '%{NAME}' "/boot/vmlinuz-$(uname -r)")
+  sudo dnf install -y "${KERNEL_PKG}-modules-extra-$(uname -r)"
+fi
+# both module files must be listed; the migration tool builds the OCI initramfs from them
+find "/lib/modules/$(uname -r)" -name 'virtio_scsi.ko*' -o -name 'sd_mod.ko*'</textarea>
+          <div class="actions">
+            <span class="muted" id="amazon-linux-copy-state"></span>
+            <button type="button" class="button primary small" id="amazon-linux-copy" title="Copy the commands to the clipboard">Copy commands</button>
+          </div>
+        </div>
         <ul id="vm-problems" class="problems"></ul>
         <div id="azure-revoke-export" class="callout" hidden>
           <p id="azure-revoke-text">A previous export or failed migration left read access granted on the disks listed above.</p>
@@ -972,7 +995,7 @@ kms:CreateGrant</pre>
             <label class="check" id="gcp-cleanup-label" hidden><input type="checkbox" name="gcp_cleanup" checked> GCP cleanup after the copy (GCE guest agent / cloud-init)</label>
             <small id="gcp-cleanup-hint" hidden>Linux images from Google Cloud may wait on GCE metadata on first boot. This option disables Google guest-agent units, removes GCE cloud-init snippets, and prefers the OCI cloud-init datasource on the copied boot volume.</small>
             <label class="check" id="aws-cleanup-label" hidden><input type="checkbox" name="aws_cleanup" checked> AWS cleanup after the copy (cloud-init, SSM, instance-connect)</label>
-            <small id="aws-cleanup-hint" hidden>Linux images from EC2 may wait on the Amazon metadata service on first boot, and Amazon Linux boots with <code>quiet rd.shell=0 rd.emergency=poweroff</code>, so a guest that cannot find its disk prints nothing and powers itself off. This option removes Amazon cloud-init drop-ins, disables <code>amazon-ssm-agent</code> and EC2 instance-connect units, prefers the OCI cloud-init datasource, and rewrites the kernel options (BLS entries, grubenv, <code>/etc/default/grub</code>) so the whole boot shows on the OCI serial console — only on the copied boot volume. Amazon Linux 2023: install <code>kernel-modules-extra</code> (or <code>kernel6.12-</code>/<code>kernel6.18-modules-extra</code> for the alternative kernels) on the instance first; the AMI kernel lacks <code>virtio_scsi</code>, which the OCI boot volume needs.</small>
+            <small id="aws-cleanup-hint" hidden>Linux images from EC2 may wait on the Amazon metadata service on first boot, and Amazon Linux boots with <code>quiet rd.shell=0 rd.emergency=poweroff</code>, so a guest that cannot find its disk prints nothing and powers itself off. This option removes Amazon cloud-init drop-ins, disables <code>amazon-ssm-agent</code> and EC2 instance-connect units, prefers the OCI cloud-init datasource, and rewrites the kernel options (BLS entries, grubenv, <code>/etc/default/grub</code>) so the whole boot shows on the OCI serial console — only on the copied boot volume. Amazon Linux 2023: install <code>kernel-modules-extra</code> inside the instance first (commands in the box above the OCI target); the AMI kernel lacks <code>virtio_scsi</code> and <code>sd_mod</code>, which the OCI boot volume needs.</small>
             <label>Boot volume type override
               <select name="boot_volume_type_override">
                 <option value="">(automatic)</option>

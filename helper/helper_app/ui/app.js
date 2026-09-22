@@ -201,6 +201,30 @@
   const tpl = (id) => document.getElementById(id).content.cloneNode(true);
   const stopPolling = () => { if (activePoll) { activePoll(); activePoll = null; } };
   const isWindows = (vm) => /windows/i.test((vm.guest_id || "") + " " + (vm.guest_full_name || ""));
+  // aws.inventory maps AL2/AL2023 AMIs to amazonlinux<ver>_64Guest / "Amazon Linux <ver>"
+  const isAmazonLinux = (vm) => /^amazonlinux/i.test(vm.guest_id || "") || /amazon linux/i.test(vm.guest_full_name || "");
+  // copy button next to a read-only command box: clipboard when available, otherwise select the text
+  function wireCopyCommands(btnId, areaId, stateId) {
+    const btn = document.getElementById(btnId);
+    if (!btn || btn.dataset.wired) return;
+    btn.dataset.wired = "1";
+    const area = document.getElementById(areaId), state = document.getElementById(stateId);
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      const text = area.value;
+      try {
+        if (!navigator.clipboard) throw new Error("clipboard API not available");
+        await navigator.clipboard.writeText(text);
+        state.textContent = `Copied ${text.split("\n").length} lines to the clipboard.`;
+      } catch (_) {
+        area.focus(); area.select();
+        state.textContent = "Clipboard not available here: the commands are selected, press Ctrl+C.";
+      } finally {
+        btn.disabled = false;
+        setTimeout(() => { if (state.textContent.startsWith("Copied")) state.textContent = ""; }, 6000);
+      }
+    });
+  }
   // client editions (mirrors mapping.map_guest_os): "Microsoft Windows 10/11 (64-bit)", or windows9/11/12_64Guest
   // without a "Server" release in the display name
   const isWindowsClient = (vm) => /windows\s+(10|11)\b/i.test(vm.guest_full_name || "")
@@ -1402,6 +1426,10 @@
     const isWin = isWindows(vm);
     document.getElementById("windows-fieldset").hidden = !isWin;
     document.getElementById("windows-driver-note").hidden = !isWin;
+    // Amazon Linux from EC2: the kernel-modules-extra package has to be installed inside the instance before
+    // the copy (the initramfs rebuild cannot add modules the guest does not have)
+    document.getElementById("amazon-linux-note").hidden = !(aws && !isWin && isAmazonLinux(vm));
+    wireCopyCommands("amazon-linux-copy", "amazon-linux-cmds", "amazon-linux-copy-state");
     // the initramfs fix-up is a Linux thing (Windows gets its VirtIO drivers installed inside the guest)
     for (const id of ["rebuild-initramfs-label", "rebuild-initramfs-hint", "fix-network-label", "fix-network-hint"]) {
       document.getElementById(id).hidden = isWin;  // Linux-only post-copy fix-ups

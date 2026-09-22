@@ -85,6 +85,7 @@ textarea.diag { width: 100%; margin-top: 6px; font: 12px/1.4 Consolas, monospace
 pre.log, textarea.log { background: #1b2a32; color: #d7e0e5; padding: 10px; border-radius: 3px; font: 12px/1.4 Consolas, monospace; max-height: 320px; overflow: auto; white-space: pre-wrap; }
 textarea.log { width: 100%; box-sizing: border-box; border: 1px solid #2a3d48; resize: vertical; min-height: 240px; }
 textarea.log:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+textarea.log.cmd { min-height: 0; margin-top: 8px; white-space: pre; overflow-x: auto; }
 .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; background: #e3eef5; color: var(--primary); }
 .badge.ok { background: #e3f5e6; color: var(--ok); }
 .badge.warn { background: #fff4d6; color: var(--warn); }
