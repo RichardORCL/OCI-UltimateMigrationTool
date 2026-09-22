@@ -248,9 +248,10 @@ class OciTarget(BaseModel):
     )
     aws_cleanup: bool = Field(
         default=True,
-        description="EC2 Linux guests: after the copy, remove Amazon cloud-init / SSM / EC2 instance-connect hooks "
-                    "and prefer the OCI cloud-init datasource so the guest boots cleanly in OCI. Ignored for "
-                    "non-AWS jobs and Windows; never fails the migration",
+        description="EC2 Linux guests: after the copy, remove Amazon cloud-init / SSM / EC2 instance-connect hooks, "
+                    "prefer the OCI cloud-init datasource, and make the first boot visible on the OCI serial "
+                    "console (drop quiet / rd.shell=0 / rd.emergency=poweroff from the kernel options, add "
+                    "earlycon). Ignored for non-AWS jobs and Windows; never fails the migration",
     )
 
     @field_validator("private_ip", mode="before")

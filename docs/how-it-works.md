@@ -370,7 +370,11 @@ and prepared for first boot in OCI; every step is optional under *Advanced: firm
 - **Cloud clean-up** (`guest/azure_cloud.py`, `aws_cloud.py`, `gcp_cloud.py`): points cloud-init at the
   Oracle datasource so it does not wait for the Azure/EC2/GCE metadata service, removes the source cloud's
   cloud-init drop-ins, disables its guest agents (walinuxagent, Amazon SSM / CloudWatch agents, Google
-  guest units) and, for Azure, comments out `/dev/sr0` entries in `fstab` that stall the boot.
+  guest units) and, for Azure, comments out `/dev/sr0` entries in `fstab` that stall the boot. For AWS it
+  also rewrites the kernel options (BLS entries, `grubenv`, `grub.cfg`, `/etc/default/grub`): Amazon Linux
+  boots with `quiet rd.shell=0 rd.emergency=poweroff`, which hides the boot and powers the instance off when
+  the root disk is not found; those are dropped and `earlycon` is added so the OCI serial console shows what
+  happens.
 
 Windows guests are not modified; they need the Oracle VirtIO drivers installed before the migration, or
 the *Maximum compatibility* preset (IDE + E1000) - see [limitations.md](limitations.md).

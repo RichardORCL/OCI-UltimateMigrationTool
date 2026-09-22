@@ -7,7 +7,7 @@ Steps (each opt-in per job, each reported on its own, none can fail the migratio
 * network   - DHCP on the renamed network interface (``helper_app.guest.network``)
 * azure_cloud - drop Azure cloud-init/waagent/fstab sr0; enable OCI serial console (``azure_cloud``)
 * gcp_cloud   - drop GCE guest-agent / cloud-init hooks (``gcp_cloud``)
-* aws_cloud   - drop Amazon cloud-init / SSM / instance-connect hooks (``aws_cloud``)
+* aws_cloud   - drop Amazon cloud-init / SSM / instance-connect hooks; unhide the boot (``aws_cloud``)
 """
 
 from __future__ import annotations
