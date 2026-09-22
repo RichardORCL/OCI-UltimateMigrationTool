@@ -226,9 +226,10 @@
   };
   const SVG_NS = "http://www.w3.org/2000/svg";
   const jobEndpointIcon = (role) => {
+    // Material-style logout (arrow out of box) / login (arrow into box), same family as the top-bar log off icon
     const d = role === "source"
-      ? "M20 18c1.1 0 1.99-.9 1.99-2L22 6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"
-      : "M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z";
+      ? "M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"
+      : "M11 7L9.6 8.4l2.6 2.6H2v2h10.2l-2.6 2.6L11 17l5-5-5-5zm9 12h-8v2h8c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-8v2h8v14z";
     const svg = document.createElementNS(SVG_NS, "svg");
     svg.setAttribute("class", `job-source-icon job-source-icon-${role}`);
     svg.setAttribute("viewBox", "0 0 24 24");
@@ -236,6 +237,7 @@
     svg.setAttribute("height", "14");
     svg.setAttribute("aria-hidden", "true");
     svg.setAttribute("focusable", "false");
+    svg.setAttribute("title", role === "source" ? "Source (outgoing)" : "Target (incoming)");
     const path = document.createElementNS(SVG_NS, "path");
     path.setAttribute("fill", "currentColor");
     path.setAttribute("d", d);
