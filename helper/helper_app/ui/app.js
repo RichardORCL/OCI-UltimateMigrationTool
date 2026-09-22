@@ -2169,16 +2169,20 @@
     // source -> target name; the target is the launched instance's name, else what the form asked for.
     // ISO jobs show bucket/file.iso as the source, Azure jobs the VM name with its resource group
     const vmCell = (j) => {
-      const source = j.iso ? `${j.iso.bucket}/${j.iso.object_name}` : j.ova ? `${j.ova.bucket}/${j.ova.object_name}` : j.ova_export ? `${j.ova_export.instance_name || sourceName(j)} → ${j.ova_export.bucket}/${j.ova_export.prefix || ""}` : sourceName(j);
-      const target = j.ova_export ? (j.ova_export.ovf_object || `${j.ova_export.bucket}/${j.ova_export.prefix || ""}`) : (j.instance_display_name || j.target.display_name || sourceName(j));
+      const sourceVm = j.iso ? `${j.iso.bucket}/${j.iso.object_name}`
+        : j.ova ? `${j.ova.bucket}/${j.ova.object_name}`
+          : j.ova_export ? (j.ova_export.instance_name || sourceName(j))
+            : sourceName(j);
+      const targetVm = j.ova_export
+        ? (j.ova_export.ovf_object || `${j.ova_export.bucket}/${j.ova_export.prefix || ""}`)
+        : (j.instance_display_name || j.target.display_name || sourceName(j));
       const where = j.azure ? el("span", { class: "muted" }, ` (${j.azure.resource_group})`) : null;
       const type = sourceTypeLabel(j);
-      return el("td", { class: "name", title: j.azure ? `${type}: ${source} \u2192 ${target} - ${j.azure.subscription_name || j.azure.subscription_id}/${j.azure.resource_group}` : `${type}: ${source} \u2192 ${target}` },
+      return el("td", { class: "name", title: j.azure ? `${type}\n${sourceVm}\n${targetVm}\n${j.azure.subscription_name || j.azure.subscription_id}/${j.azure.resource_group}` : `${type}\n${sourceVm}\n${targetVm}` },
         el("div", { class: "job-source" },
-          el("span", { class: "source-type-box", title: "Source platform" }, type),
-          el("div", { class: "job-source-path" },
-            el("div", { class: "job-source-from" }, source, where),
-            el("div", { class: "muted job-source-target" }, el("span", { class: "arrow" }, "\u2192 "), target))));
+          el("div", { class: "job-source-line job-source-type" }, el("span", { class: "source-type-box", title: "Source platform" }, type)),
+          el("div", { class: "job-source-line job-source-vm" }, sourceVm, where),
+          el("div", { class: "job-source-line job-source-target muted" }, targetVm)));
     };
     // start / end / duration / average transfer speed of the migration
     const migrationCell = (j) => {
