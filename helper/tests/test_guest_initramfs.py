@@ -27,8 +27,9 @@ class FakeShell:
     def __init__(self, layout: str = "lvm", boot_fstab="UUID=boot-uuid", virtio_in=(), tools_running=True,
                  lvm_foreign_vgs=("ocivolume",), dracut=True, dracut_rc=0, fail_mount=(), old_dracut=False,
                  udev_stale=False, lsblk_hides_lvs=False, blkid_fails=False, partial_virtio=(),
-                 modules_missing=(), builtin=(), os_release=None):
+                 modules_missing=(), builtin=(), os_release=None, scsi_no_sd=()):
         self.layout = layout
+        self.scsi_no_sd = set(scsi_no_sd)  # kernels whose initramfs has virtio_pci+virtio_scsi but no sd_mod
         self.partial_virtio = set(partial_virtio)  # kernels whose initramfs has virtio_blk/net but no virtio_scsi
         # driver names absent from the guest's /lib/modules: a set (all kernels) or {kernel: set}
         self.modules_missing = modules_missing if isinstance(modules_missing, dict) else set(modules_missing)
@@ -172,7 +173,7 @@ class FakeShell:
         (mod_dir / "modules.dep").write_text("")
         shipped = {"virtio_pci": "kernel/drivers/virtio", "virtio_scsi": "kernel/drivers/scsi",
                    "virtio_blk": "kernel/drivers/block", "virtio_net": "kernel/drivers/net",
-                   "vmw_pvscsi": "kernel/drivers/scsi"}
+                   "vmw_pvscsi": "kernel/drivers/scsi", "sd_mod": "kernel/drivers/scsi"}
         for name, sub in shipped.items():
             if name in self.missing_for(mod_dir.name) or name in self.builtin:
                 continue
@@ -202,12 +203,14 @@ class FakeShell:
             (boot / f"vmlinuz-{ver}").write_text("kernel")
             # lsinitrd-style listing; modules appear as (compressed) .ko files under usr/lib/modules
             files = ["usr/lib/modules/x/kernel/drivers/scsi/vmw_pvscsi.ko.xz"]
-            if ver in self.virtio_in or ver in self.partial_virtio:
+            if ver in self.virtio_in or ver in self.partial_virtio or ver in self.scsi_no_sd:
                 files += ["usr/lib/modules/x/kernel/drivers/virtio/virtio_pci.ko.xz",
                           "usr/lib/modules/x/kernel/drivers/block/virtio_blk.ko.xz",
                           "usr/lib/modules/x/kernel/drivers/net/virtio_net.ko.xz"]
-            if ver in self.virtio_in and "virtio_scsi" not in self.builtin:
+            if (ver in self.virtio_in and "virtio_scsi" not in self.builtin) or ver in self.scsi_no_sd:
                 files.append("usr/lib/modules/x/kernel/drivers/scsi/virtio_scsi.ko.xz")
+            if ver in self.virtio_in:
+                files.append("usr/lib/modules/x/kernel/drivers/scsi/sd_mod.ko.xz")
             (boot / f"initramfs-{ver}.img").write_text("\n".join(files) + "\n")
         (boot / "initramfs-0-rescue-abc.img").write_text("rescue")
 
@@ -319,6 +322,7 @@ class FakeShell:
                 assert ("--no-hostonly" in argv) is (not self.old_dracut)
                 img.write_text(f"generic image {ver}\nusr/lib/modules/x/kernel/drivers/block/virtio_blk.ko.xz\n"
                                "usr/lib/modules/x/kernel/drivers/virtio/virtio_pci.ko.xz\n"
+                               "usr/lib/modules/x/kernel/drivers/scsi/sd_mod.ko.xz\n"
                                + ("" if "virtio_scsi" in self.missing_for(ver) or "virtio_scsi" in self.builtin
                                   else "usr/lib/modules/x/kernel/drivers/scsi/virtio_scsi.ko.xz\n"))
                 self.rebuilt.append(ver)
@@ -447,7 +451,19 @@ def test_initramfs_with_virtio_blk_but_no_virtio_scsi_is_rebuilt(base):
     shell = FakeShell(layout="plain", boot_fstab="", partial_virtio={OLD_KERNEL, RHEL_KERNEL})
     result, msgs = run(shell, base)
     assert result.status == "done" and sorted(shell.rebuilt) == sorted([OLD_KERNEL, RHEL_KERNEL])
-    assert any("lacks virtio" in m for m in msgs)
+    assert any("lacks OCI boot drivers (virtio_scsi, sd_mod)" in m for m in msgs)
+
+
+def test_initramfs_with_virtio_scsi_but_no_sd_mod_is_rebuilt(base):
+    """Second AL2023 attempt (instance …fy7d4jq): virtio_scsi loaded, 'scsi 0:0:0:1: Direct-Access ORACLE
+    BlockVolume' appeared, but no /dev/sda - the SCSI disk driver sd_mod was not in the initramfs because
+    an NVMe-booting EC2 host never needed it.  sd_mod must be added and checked like virtio_scsi."""
+    shell = FakeShell(layout="plain", boot_fstab="", scsi_no_sd={OLD_KERNEL, RHEL_KERNEL})
+    result, msgs = run(shell, base)
+    assert result.status == "done" and sorted(shell.rebuilt) == sorted([OLD_KERNEL, RHEL_KERNEL])
+    assert any("lacks OCI boot drivers (sd_mod)" in m for m in msgs)
+    dracut = next(c for c in shell.calls if c[0] == "chroot" and c[2] == "dracut" and c[3] == "--force")
+    assert "sd_mod" in dracut[dracut.index("--add-drivers") + 1].split()
 
 
 def test_amazon_linux_without_virtio_scsi_module_fails_with_package_hint(base):
@@ -493,8 +509,9 @@ def test_missing_virtio_pci_module_fails_generically(base):
 
 
 def test_builtin_virtio_drivers_count_as_present(base):
-    """Kernels with CONFIG_SCSI_VIRTIO=y have no virtio_scsi.ko anywhere: modules.builtin says so."""
-    shell = FakeShell(layout="plain", boot_fstab="", builtin={"virtio_scsi"}, partial_virtio={OLD_KERNEL, RHEL_KERNEL})
+    """Kernels with CONFIG_SCSI_VIRTIO=y / CONFIG_BLK_DEV_SD=y have no .ko anywhere: modules.builtin says so."""
+    shell = FakeShell(layout="plain", boot_fstab="", builtin={"virtio_scsi", "sd_mod"},
+                      partial_virtio={OLD_KERNEL, RHEL_KERNEL})
     result, _ = run(shell, base)
     assert result.status == "not_needed", result
     assert shell.rebuilt == []

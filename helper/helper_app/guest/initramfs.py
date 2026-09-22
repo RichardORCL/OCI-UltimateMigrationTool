@@ -36,10 +36,14 @@ from helper_app.models import GuestFixup
 
 log = logging.getLogger(__name__)
 
-VIRTIO_DRIVERS = "virtio virtio_pci virtio_ring virtio_blk virtio_scsi virtio_net"
+# sd_mod is the SCSI disk driver: a kernel that booted from NVMe (Amazon Linux on EC2) never had it in its
+# initramfs, and dracut-config-ec2 does not add it either - without it the volume shows up as
+# "scsi 0:0:0:1: Direct-Access ORACLE BlockVolume" and no /dev/sda ever appears.
+VIRTIO_DRIVERS = "virtio virtio_pci virtio_ring virtio_blk virtio_scsi virtio_net sd_mod"
 # What the guest must have to find its root disk in OCI: paravirtualized boot volumes are virtio-scsi disks
-# behind a virtio-pci transport.  virtio_blk/virtio_net alone (what many kernels ship by default) do not help.
-REQUIRED_BOOT_DRIVERS = ("virtio_pci", "virtio_scsi")
+# behind a virtio-pci transport, attached by the SCSI disk driver.  virtio_blk/virtio_net alone (what many
+# kernels ship by default) do not help.
+REQUIRED_BOOT_DRIVERS = ("virtio_pci", "virtio_scsi", "sd_mod")
 DRACUT_CONF_NAME = "oci-virtio.conf"
 ROOT_FS_TYPES = {"xfs", "ext4", "ext3", "ext2"}
 # RHEL (and similar) often place /usr (kernel modules, dracut) on its own LV; mount these from fstab
@@ -317,7 +321,7 @@ class _Session:
             missing = self.missing_in_initramfs(img, ver)
             if missing:
                 todo.append((ver, img))
-                self.note(f"kernel {ver}: {img.name} lacks virtio drivers ({', '.join(missing)})")
+                self.note(f"kernel {ver}: {img.name} lacks OCI boot drivers ({', '.join(missing)})")
             else:
                 self.note(f"kernel {ver}: {img.name} already has virtio drivers")
         if not todo:
@@ -355,7 +359,8 @@ class _Session:
                 raise Fail(f"dracut failed for kernel {ver} (rc {r.returncode}): {_tail(r.stderr or r.stdout)}")
             still_missing = self.missing_in_initramfs(img, ver)
             if still_missing:
-                raise Fail(f"dracut finished for kernel {ver} but {img.name} still lacks {', '.join(still_missing)}")
+                raise Fail(f"dracut finished for kernel {ver} but {img.name} still lacks {', '.join(still_missing)} "
+                           "- check the guest's /etc/dracut.conf.d for omit_drivers/drivers settings")
             rebuilt.append(ver)
         self.sh(["sync"], ok=False)
         return [v for v, _ in kernels], rebuilt
@@ -602,7 +607,8 @@ class _Session:
         names = sorted({n for ns in unavailable.values() for n in ns})
         kernels = ", ".join(unavailable)
         msg = (f"kernel {kernels} has no {', '.join(names)} driver - the OCI paravirtualized boot volume is a "
-               f"virtio-scsi disk, so the guest cannot find its root file system without it")
+               f"virtio-scsi disk (virtio_pci + virtio_scsi + sd_mod), so the guest cannot find its root file "
+               f"system without it")
         if "amazon linux" in self.os_pretty_name().lower():
             pkgs = sorted({amazon_modules_extra_package(ver) for ver in unavailable})
             return (msg + f"; Amazon Linux ships it in the {', '.join(pkgs)} package: run "
