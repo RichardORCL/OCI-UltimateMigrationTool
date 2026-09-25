@@ -279,13 +279,17 @@ def _open_vhdx(reader: DiskReader, parent: Optional[VirtualDisk]) -> VirtualDisk
     if block_size <= 0 or sector <= 0 or virtual_size < 0:
         raise ImageError("VHDX geometry is empty")
     chunk_ratio = (1 << 23) * sector // block_size
+    if chunk_ratio <= 0:
+        raise ImageError("VHDX block size is larger than a chunk")
     nblocks = (virtual_size + block_size - 1) // block_size
     bat = reader.read_at(bat_off, bat_len)
     spans: list[_Span] = []
     for index in range(nblocks):
         start = index * block_size
         length = min(block_size, virtual_size - start)
-        bat_index = index if not has_parent else index + index // chunk_ratio
+        # Hyper-V reserves a sector-bitmap slot after every chunk even when the disk has no parent.
+        # Treating that slot as payload shifts every block past the first chunk (4 GB at 32 MB blocks).
+        bat_index = index + index // chunk_ratio
         state, file_off = _bat_entry(bat, bat_index)
         if state == _FULL:
             spans.append(_Span(start, length, "data", data_offset=file_off, sector=sector))

@@ -89,6 +89,16 @@ def test_dynamic_disks_skip_unallocated_blocks_and_a_differencing_chain_reads_th
     assert child.allocated() == [(0, block)]
 
 
+def test_dynamic_vhdx_reads_the_block_after_the_sector_bitmap_slot():
+    # 32 MB blocks put a sector-bitmap slot at BAT entry 128. Payload block 128 is the next entry.
+    block = 32 * 1024 * 1024
+    marker = b"PAST-CHUNK"
+    disk = open_image(_Mem(build_dynamic_vhdx(block * 129, block, {0: b"FIRST", 128: marker})))
+    assert disk.read(0, 5) == b"FIRST"
+    assert disk.read(block * 128, len(marker)) == marker
+    assert disk.allocated() == [(0, block), (block * 128, block)]
+
+
 def test_stop_vm_targets_the_vm_object_because_stop_vm_has_no_id():
     scripts: list[str] = []
 

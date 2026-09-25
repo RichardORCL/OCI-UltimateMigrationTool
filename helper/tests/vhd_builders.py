@@ -1,7 +1,8 @@
 """Small VHD and VHDX files for the Hyper-V reader tests.
 
 The layout matches ``helper_app.disk.vhd_image``: dynamic VHD blocks carry a sector bitmap in
-front of the payload, and a differencing VHDX stores that bitmap in its own BAT entry.
+front of the payload, and a VHDX block allocation table keeps a sector-bitmap slot after every
+chunk, including a dynamic disk that has no parent.
 """
 
 from __future__ import annotations
@@ -59,9 +60,15 @@ def build_dynamic_vhd(virtual_size: int, block_size: int, blocks: dict[int, byte
 
 
 def build_dynamic_vhdx(virtual_size: int, block_size: int, blocks: dict[int, bytes]) -> bytes:
-    """Dynamic VHDX with no parent. Missing blocks are left unallocated."""
+    """Dynamic VHDX with no parent. Missing blocks are left unallocated.
+
+    Payload entry ``i`` is stored at BAT index ``i + i // chunk_ratio``. The slot at the end of
+    each chunk is the sector bitmap, left not-present, which is how Hyper-V writes a dynamic disk.
+    """
     count = (virtual_size + block_size - 1) // block_size
-    bat = bytearray(count * 8)
+    chunk_ratio = (1 << 23) * 512 // block_size
+    slots = (count + chunk_ratio - 1) // chunk_ratio if count else 0
+    bat = bytearray((count + slots) * 8)
     payloads: list[tuple[int, bytes]] = []
     cursor = 3 * MIB
     for index in range(count):
@@ -70,7 +77,7 @@ def build_dynamic_vhdx(virtual_size: int, block_size: int, blocks: dict[int, byt
         payload = blocks[index]
         if len(payload) < block_size:
             payload = payload + b"\x00" * (block_size - len(payload))
-        _put_bat(bat, index, _FULL, cursor)
+        _put_bat(bat, index + index // chunk_ratio, _FULL, cursor)
         payloads.append((cursor, payload[:block_size]))
         cursor += block_size
     return _assemble_vhdx(virtual_size, block_size, has_parent=False, bat=bat, payloads=payloads)
