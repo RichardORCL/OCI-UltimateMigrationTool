@@ -250,6 +250,27 @@ def with_os_version(os_meta: OsMetadata, version: Optional[str]) -> OsMetadata:
     return replace(os_meta, operating_system_version=version.strip(), version_detected=True)
 
 
+def resolve_target_os(guest_id: str, guest_full_name: str, operating_system: Optional[str],
+                      operating_system_version: Optional[str]) -> OsMetadata:
+    """Detected guest OS, with the target form's OS and release applied over it.
+
+    ``operating_system`` empty keeps the detected family and only applies a release override.
+    A chosen family (Ubuntu, Oracle Linux, Windows, …) replaces the detection; the release is
+    normalized onto the OCI catalog when that catalog has an entry for it.
+    """
+    detected = map_guest_os(guest_id, guest_full_name)
+    name = (operating_system or "").strip()
+    version = (operating_system_version or "").strip()
+    if not name:
+        return with_os_version(detected, version or None)
+    family = "windows" if name.lower().startswith("windows") else "linux"
+    if not version and name == detected.operating_system:
+        version = detected.operating_system_version
+    if version:
+        version = normalize_os_version_for_oci(name, version)
+    return OsMetadata(name, version or "unknown", family, version_detected=bool(version and version != "unknown"))
+
+
 def oci_firmware(firmware: Firmware) -> str:
     return OCI_FIRMWARE_UEFI if firmware == Firmware.EFI else OCI_FIRMWARE_BIOS
 

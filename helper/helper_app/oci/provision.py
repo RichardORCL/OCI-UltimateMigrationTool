@@ -53,12 +53,11 @@ from helper_app.oci.mapping import (
     OsMetadata,
     ShapeConfig,
     is_bare_metal_shape,
-    map_guest_os,
     map_launch_options,
     map_shape,
     oci_firmware,
+    resolve_target_os,
     volume_size_gb,
-    with_os_version,
 )
 from helper_app.oci.seed_image import SeedImageService
 
@@ -125,7 +124,8 @@ class Provisioner:
             )
 
         job.phase = JobPhase.PROVISIONING
-        os_meta = with_os_version(map_guest_os(vm.guest_id, vm.guest_full_name), target.operating_system_version)
+        os_meta = resolve_target_os(vm.guest_id, vm.guest_full_name, target.operating_system,
+                                    target.operating_system_version)
         firmware = oci_firmware(vm.firmware)
         launch_options = map_launch_options(vm, target)
         shape = map_shape(vm, target, self.s.default_shape, self.s.max_memory_gb_per_ocpu)
@@ -1095,5 +1095,6 @@ def _gb(n: int) -> float:
 
 def _is_windows_job(job: Job) -> bool:
     if job.vm is not None:
-        return job.vm.is_windows or map_guest_os(job.vm.guest_id, job.vm.guest_full_name).is_windows
+        return resolve_target_os(job.vm.guest_id, job.vm.guest_full_name, job.target.operating_system,
+                                 job.target.operating_system_version).is_windows
     return job.is_windows

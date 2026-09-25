@@ -101,9 +101,10 @@ You log in with an engine URL, user name and password (for example `admin@ovirt`
 because `internal` is the authz profile and `@ovirt` is part of the user name. The password stays
 in memory for the browser session (`POST /api/auth/olvm/login`). The tool lists the engine's virtual
 machines (`GET /api/olvm/vms`) and maps each one to a `VmSpec` (`olvm/inventory.py`): SeaBIOS or OVMF /
-Secure Boot, CPU topology and memory, the boot disk first, and the guest OS from the oVirt `os.type`
-(`rhel_9x64`, `ol_8x64`, `windows_2022`, …) so `oci/mapping.py` recognises the same operating systems as
-for vSphere.
+Secure Boot, CPU topology and memory, the boot disk first, and the guest OS. The guest agent
+(`guest_operating_system`: distribution and version, for example Ubuntu 26.04) is used when OLVM has it;
+the configured `os.type` (`rhel_9x64`, `ol_8x64`, `windows_2022`, …) is the fallback. On the migration
+form you can change the operating system and release recorded on the OCI image.
 
 After the OCI side is prepared the tool:
 

@@ -192,9 +192,14 @@ class OciTarget(BaseModel):
     )
     assign_public_ip: bool = False
     start_after_migration: bool = True
+    operating_system: Optional[str] = Field(
+        default=None, max_length=64,
+        description="Operating system recorded on the OCI image. Overrides the OS detected from the source "
+                    "when set (for example Ubuntu instead of Custom Linux).",
+    )
     operating_system_version: Optional[str] = Field(
         default=None, max_length=64,
-        description="Release recorded on the OCI image (e.g. Ubuntu '24.04'); required when vSphere does not "
+        description="Release recorded on the OCI image (e.g. Ubuntu '24.04'); required when the source does not "
                     "report it (VmInspection.os.version_detected is false), otherwise overrides the detected one",
     )
     windows_license_type: Optional[WindowsLicenseType] = None

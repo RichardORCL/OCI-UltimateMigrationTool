@@ -983,7 +983,10 @@ find "/lib/modules/$(uname -r)" -name 'virtio_scsi.ko*' -o -name 'sd_mod.ko*'</t
           <label>Instance name
             <input name="display_name" type="text" maxlength="255">
           </label>
-          <label id="os-version-label" hidden>Guest OS version
+          <label id="os-name-label">Operating system
+            <select name="operating_system" required></select>
+          </label>
+          <label id="os-version-label" hidden>OS version
             <select name="operating_system_version"></select>
             <small id="os-version-hint"></small>
           </label>

@@ -225,10 +225,6 @@
       }
     });
   }
-  // client editions (mirrors mapping.map_guest_os): "Microsoft Windows 10/11 (64-bit)", or windows9/11/12_64Guest
-  // without a "Server" release in the display name
-  const isWindowsClient = (vm) => /windows\s+(10|11)\b/i.test(vm.guest_full_name || "")
-    || (!/server/i.test(vm.guest_full_name || "") && /^windows(9|1[12])_64/i.test(vm.guest_id || ""));
   const TERMINAL = ["COMPLETED", "FAILED", "CANCELLED"];
   // remote console: completed migrations and running ISO installations with an OCI instance (mirrors
   // routes_console._console_job)
@@ -1360,9 +1356,11 @@
         "<strong>This VM is powered on.</strong> Starting the migration <strong>shuts it down</strong> in OLVM right before the disk export (after the OCI instance and volumes are prepared): a guest shutdown, then a hard stop if it does not power off in time. The VM stays powered off. You will be asked to confirm.";
     }
 
-    let inspection, options;
+    let inspection, options, osCatalog;
     try {
-      [inspection, options] = await Promise.all([api("GET", inspectUrl()), api("GET", "/oci/options")]);
+      [inspection, options, osCatalog] = await Promise.all([
+        api("GET", inspectUrl()), api("GET", "/oci/options"), api("GET", "/oci/os-catalog"),
+      ]);
     } catch (e) { if (e.status !== 401) showError("Cannot load VM or OCI information: " + e.message); return; }
     const vm = inspection.vm;
 
@@ -1478,29 +1476,65 @@
       firmwareText: () => (vm.firmware === "efi" ? "UEFI_64" : "BIOS") + (vm.secure_boot ? " + Secure Boot" : ""),
     });
     sel("display_name").value = vm.name;
-    // guest OS release recorded on the OCI image: vSphere encodes it for most guests, but not for e.g.
-    // ubuntu64Guest ("Ubuntu Linux (64-bit)"), where the user has to pick it from OCI's list
-    const osInfo = inspection.os;
-    const osLabel = document.getElementById("os-version-label"), osSel = sel("operating_system_version");
-    if (osInfo && osInfo.version_choices.length) {
-      osLabel.hidden = false;
+    // OCI image OS: detected from the source, and both the family and the release can be overwritten
+    const osInfo = inspection.os || {};
+    const osNameSel = sel("operating_system");
+    const osLabel = document.getElementById("os-version-label");
+    const osSel = sel("operating_system_version");
+    const osHint = document.getElementById("os-version-hint");
+    const from = gcp ? "Google Cloud" : aws ? "Amazon EC2" : azure ? "Azure" : olvm ? "OLVM" : "vCenter";
+    const catalog = Array.isArray(osCatalog) ? osCatalog : [];
+    for (const entry of catalog) osNameSel.append(el("option", { value: entry.operating_system }, entry.operating_system));
+    const detectedName = osInfo.operating_system || "";
+    if (detectedName && catalog.some((e) => e.operating_system === detectedName)) osNameSel.value = detectedName;
+    else if (catalog.some((e) => e.operating_system === "Custom Linux")) osNameSel.value = "Custom Linux";
+    const catalogEntry = () => catalog.find((e) => e.operating_system === osNameSel.value) || { versions: [], operating_system: osNameSel.value };
+    const renderOsVersion = () => {
+      const entry = catalogEntry();
+      const versions = entry.versions || [];
       osSel.innerHTML = "";
-      if (!osInfo.version_detected) osSel.append(el("option", { value: "" }, `Select the ${osInfo.operating_system} release...`));
-      for (const v of osInfo.version_choices) osSel.append(el("option", { value: v }, `${osInfo.operating_system} ${v}`));
-      osSel.value = osInfo.version_detected ? osInfo.operating_system_version : "";
-      osSel.required = !osInfo.version_detected;
-      osLabel.classList.toggle("attention", !osInfo.version_detected);
-      osSel.addEventListener("change", () => osLabel.classList.toggle("attention", !osSel.value));
-      const from = gcp ? "Google Cloud" : aws ? "Amazon EC2" : azure ? "Azure" : olvm ? "OLVM" : "vCenter";
-      document.getElementById("os-version-hint").textContent = osInfo.version_detected
-        ? `Detected from ${from} (${vm.guest_full_name || vm.guest_id}); change it if the guest runs another release.`
-        : `${from} only reports "${vm.guest_full_name || vm.guest_id}" without the release. Select the one installed in the guest; OCI records it on the image and uses it for OS-specific defaults.`;
-    } else {
-      osLabel.hidden = true; osSel.required = false;
-    }
+      const same = entry.operating_system === detectedName;
+      if (!versions.length) {
+        osLabel.hidden = true;
+        osSel.required = false;
+        osHint.textContent = `Detected from ${from} (${vm.guest_full_name || vm.guest_id}). This is recorded on the OCI image; choose another operating system to override it.`;
+        return;
+      }
+      osLabel.hidden = false;
+      if (!same || !osInfo.version_detected) osSel.append(el("option", { value: "" }, `Select the ${entry.operating_system} release...`));
+      for (const v of versions) {
+        const label = v.toLowerCase().startsWith(entry.operating_system.toLowerCase()) ? v : `${entry.operating_system} ${v}`;
+        osSel.append(el("option", { value: v }, label));
+      }
+      if (same && osInfo.version_detected && versions.includes(osInfo.operating_system_version)) osSel.value = osInfo.operating_system_version;
+      else osSel.value = "";
+      osSel.required = true;
+      osLabel.classList.toggle("attention", !osSel.value);
+      osHint.textContent = same && osInfo.version_detected
+        ? `Detected from ${from} (${vm.guest_full_name || vm.guest_id}). Change the operating system or the release if OCI should record a different one.`
+        : `${from} reports "${vm.guest_full_name || vm.guest_id}". Select the operating system and release to record on the OCI image.`;
+    };
+    const selectedIsWindows = () => /^windows$/i.test(osNameSel.value);
+    const applyOsChoice = () => {
+      renderOsVersion();
+      const win = selectedIsWindows();
+      document.getElementById("windows-fieldset").hidden = !win;
+      document.getElementById("windows-driver-note").hidden = !win;
+      const client = win && (osSel.value === "Windows10" || osSel.value === "Windows11");
+      const ociLic = form.querySelector('input[name="windows_license_type"][value="OCI_PROVIDED"]');
+      if (ociLic) {
+        ociLic.disabled = client;
+        if (client) {
+          ociLic.checked = false;
+          form.querySelector('input[name="windows_license_type"][value="BRING_YOUR_OWN_LICENSE"]').checked = true;
+          document.getElementById("windows-license-hint").textContent = "Windows 10/11: OCI does not provide licenses for client editions, so the instance is registered as BYOL (check your Microsoft license terms for running the desktop OS in a cloud).";
+        }
+      }
+    };
+    osNameSel.addEventListener("change", applyOsChoice);
+    osSel.addEventListener("change", applyOsChoice);
+    applyOsChoice();
     const isWin = isWindows(vm);
-    document.getElementById("windows-fieldset").hidden = !isWin;
-    document.getElementById("windows-driver-note").hidden = !isWin;
     // Amazon Linux from EC2: the kernel-modules-extra package has to be installed inside the instance before
     // the copy (the initramfs rebuild cannot add modules the guest does not have)
     document.getElementById("amazon-linux-note").hidden = !(aws && !isWin && isAmazonLinux(vm));
@@ -1525,13 +1559,6 @@
     document.getElementById("azure-transfer-note").hidden = !azure;
     document.getElementById("aws-transfer-note").hidden = !aws;
     document.getElementById("nfc-options").hidden = azure || gcp || aws || olvm;
-    if (isWin && isWindowsClient(vm)) {
-      // OCI has no licenses for client editions; the API refuses OCI_PROVIDED for them
-      const ociLic = form.querySelector('input[name="windows_license_type"][value="OCI_PROVIDED"]');
-      ociLic.disabled = true; ociLic.checked = false;
-      form.querySelector('input[name="windows_license_type"][value="BRING_YOUR_OWN_LICENSE"]').checked = true;
-      document.getElementById("windows-license-hint").textContent = "Windows 10/11: OCI does not provide licenses for client editions, so the instance is registered as BYOL (check your Microsoft license terms for running the desktop OS in a cloud).";
-    }
     document.getElementById("esxi-host-hint").textContent = vm.host_name ? `(${vm.host_name})` : "";
     sel("nfc_direct_to_esxi").disabled = !vm.host_name;
     // the NFC options are vCenter-only; Azure downloads page ranges instead
@@ -1559,10 +1586,11 @@
         ocpus: fd.get("ocpus") ? Number(fd.get("ocpus")) : null,
         memory_gb: fd.get("memory_gb") ? Number(fd.get("memory_gb")) : null,
         display_name: fd.get("display_name") || null,
+        operating_system: osNameSel.value || null,
         operating_system_version: osLabel.hidden ? null : (fd.get("operating_system_version") || null),
         assign_public_ip: fd.get("assign_public_ip") === "on",
         start_after_migration: fd.get("start_after_migration") === "on",
-        windows_license_type: isWin ? fd.get("windows_license_type") : null,
+        windows_license_type: selectedIsWindows() ? fd.get("windows_license_type") : null,
         compatibility_mode: fd.get("compatibility_mode") === "on",
         boot_volume_type_override: fd.get("boot_volume_type_override") || null,
         network_type_override: fd.get("network_type_override") || null,

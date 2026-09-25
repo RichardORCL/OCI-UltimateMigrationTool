@@ -2,8 +2,9 @@
 
 Implemented in `helper/helper_app/oci/mapping.py`. Every source (VMware, OLVM, Azure, AWS, Google Cloud,
 OVA) is reduced to the same `VmSpec` / OS metadata before a seed image is chosen. VMware supplies a
-vSphere `guestId`; OLVM inventory maps the oVirt `os.type` (`rhel_9x64`, `ol_8x64`, `windows_2022`, …)
-onto the same guest ids, and Azure, AWS and Google Cloud inventory code synthesizes an equivalent guest id
+vSphere `guestId`; OLVM inventory prefers the guest agent's distribution and version and otherwise maps
+the oVirt `os.type` (`rhel_9x64`, `ol_8x64`, `windows_2022`, …) onto the same guest ids, and Azure, AWS
+and Google Cloud inventory code synthesizes an equivalent guest id
 from the image/AMI/license so the table below still applies.
 
 ## Guest OS -> seed image metadata

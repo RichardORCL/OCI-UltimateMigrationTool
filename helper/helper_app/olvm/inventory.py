@@ -121,6 +121,94 @@ def guess_guest_os(os_type: str) -> tuple[str, str]:
     return "otherLinux64Guest", os_type or "Linux (64-bit)"
 
 
+def _reported_version(guest: dict) -> str:
+    version = guest.get("version") or {}
+    if not isinstance(version, dict):
+        return ""
+    full = str(version.get("full_version") or "").strip()
+    if full:
+        return full
+    major = str(version.get("major") or "").strip()
+    minor = str(version.get("minor") or "").strip()
+    if major and minor and minor not in ("0",):
+        return f"{major}.{minor}"
+    return major
+
+
+def _windows_from_guest(text: str) -> tuple[str, str]:
+    low = text.lower()
+    match = re.search(r"server\s*(20\d\d)", low) or re.search(r"\b(20\d\d)\b", low)
+    if match and "server" in low:
+        year = match.group(1)
+        return f"windows{year}srv_64Guest", f"Microsoft Windows Server {year}"
+    match = re.search(r"windows\s*(1[01])\b|\b(1[01])\b", low)
+    if match:
+        release = match.group(1) or match.group(2)
+        return f"windows{release}_64Guest", f"Microsoft Windows {release} (64-bit)"
+    return "windows2019srv_64Guest", "Microsoft Windows"
+
+
+def _from_guest_agent(guest: Any) -> tuple[str, str] | None:
+    """``(guest_id, guest_full_name)`` from the oVirt guest agent, when it reported a distribution."""
+    if not isinstance(guest, dict):
+        return None
+    distro = str(guest.get("distribution") or "").strip()
+    family = str(guest.get("family") or "").strip().lower()
+    version = _reported_version(guest)
+    blob = f"{distro} {version}".strip()
+    low = blob.lower()
+    if not low:
+        kernel = str(((guest.get("kernel") or {}).get("version") or {}).get("full_version") or "")
+        if kernel.endswith("-generic"):
+            return "ubuntu64Guest", "Ubuntu Linux (64-bit)"
+        return None
+    if "windows" in low or family == "windows":
+        return _windows_from_guest(blob)
+    ubuntu = re.search(r"(\d{2}\.\d{2})", version)
+    if "ubuntu" in low:
+        if ubuntu:
+            return "ubuntu64Guest", f"Ubuntu {ubuntu.group(1)}"
+        return "ubuntu64Guest", "Ubuntu Linux (64-bit)"
+    major = ""
+    match = re.search(r"(\d+)", version)
+    if match:
+        major = match.group(1)
+    named = (
+        ("oracle linux", "oracleLinux", "Oracle Linux"),
+        ("red hat", "rhel", "Red Hat Enterprise Linux"),
+        ("rhel", "rhel", "Red Hat Enterprise Linux"),
+        ("centos", "centos", "CentOS"),
+        ("rocky", "rockylinux", "Rocky Linux"),
+        ("alma", "almalinux", "AlmaLinux"),
+        ("debian", "debian", "Debian"),
+        ("suse", "sles", "SUSE Linux Enterprise Server"),
+    )
+    for needle, prefix, title in named:
+        if needle not in low:
+            continue
+        if prefix in ("rockylinux", "almalinux"):
+            return f"{prefix}_64Guest", f"{title} {major}".strip()
+        if major:
+            return f"{prefix}{major}_64Guest", f"{title} {major}"
+        return "otherLinux64Guest", title
+    if distro:
+        return "otherLinux64Guest", distro
+    return None
+
+
+def guest_os_from_vm(vm: dict) -> tuple[str, str]:
+    """Guest identity for ``map_guest_os``.
+
+    The guest agent (``guest_operating_system``) names the installed OS and release. The VM's
+    configured ``os.type`` is only a fallback: it is often ``other_linux`` even when the guest
+    agent knows the distribution.
+    """
+    reported = _from_guest_agent(vm.get("guest_operating_system"))
+    if reported:
+        return reported
+    return guess_guest_os(str((vm.get("os") or {}).get("type") or ""))
+
+
 def _cpu_count(vm: dict) -> int:
     topo = ((vm.get("cpu") or {}).get("topology") or {})
     sockets = int(topo.get("sockets") or 1)
@@ -154,7 +242,7 @@ def _nics(vm: dict) -> list[NicSpec]:
 
 def vm_spec_from_olvm(vm: dict) -> tuple[VmSpec, list[str]]:
     """``(VmSpec, disk ids)`` with disk ids in the same order as ``VmSpec.disks``."""
-    guest_id, full_name = guess_guest_os(str((vm.get("os") or {}).get("type") or ""))
+    guest_id, full_name = guest_os_from_vm(vm)
     firmware, secure = firmware_of(vm)
     disks: list[DiskSpec] = []
     disk_ids: list[str] = []

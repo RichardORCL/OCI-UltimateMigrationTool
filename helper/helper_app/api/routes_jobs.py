@@ -53,7 +53,7 @@ from helper_app.oci.mapping import (
     map_guest_os,
     normalize_os_version_for_oci,
     os_version_choices,
-    with_os_version,
+    resolve_target_os,
 )
 from helper_app.oci.options import PrivateIpError, check_private_ip, primary_vnic_ips
 from helper_app.sessions import UserSession
@@ -110,17 +110,28 @@ async def _check_target(st, target, allow_arm: bool = False) -> None:
 
 
 async def _check_guest_os(st, inspection: VmInspection, target, source: str) -> None:
-    """Windows license and OS release checks shared by the VMware and Azure jobs."""
-    if inspection.vm.is_windows and target.windows_license_type is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "a Windows license type must be selected")
-    os_meta = map_guest_os(inspection.vm.guest_id, inspection.vm.guest_full_name)
-    if not os_meta.version_detected and not target.operating_system_version and os_version_choices(os_meta):
+    """Windows license and OS release checks shared by the VMware, OLVM and cloud jobs."""
+    detected = map_guest_os(inspection.vm.guest_id, inspection.vm.guest_full_name)
+    chosen = (target.operating_system or "").strip()
+    if (not chosen and not detected.version_detected and not target.operating_system_version
+            and os_version_choices(detected)):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            f"{source} does not report which {os_meta.operating_system} release the guest runs; select the "
-            f"OS version ({', '.join(os_version_choices(os_meta))})",
+            f"{source} does not report which {detected.operating_system} release the guest runs; select the "
+            f"OS version ({', '.join(os_version_choices(detected))})",
         )
-    os_meta = with_os_version(os_meta, target.operating_system_version)
+    os_meta = resolve_target_os(inspection.vm.guest_id, inspection.vm.guest_full_name,
+                                target.operating_system, target.operating_system_version)
+    if chosen:
+        version = _require_catalog_os_version(os_meta.operating_system, os_meta.operating_system_version)
+        target.operating_system = os_meta.operating_system
+        target.operating_system_version = version
+        os_meta = resolve_target_os(inspection.vm.guest_id, inspection.vm.guest_full_name,
+                                    target.operating_system, version)
+    elif target.operating_system_version:
+        target.operating_system_version = os_meta.operating_system_version
+    if os_meta.is_windows and target.windows_license_type is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "a Windows license type must be selected")
     if (os_meta.operating_system_version in WINDOWS_CLIENT_VERSIONS
             and target.windows_license_type == WindowsLicenseType.OCI_PROVIDED):
         raise HTTPException(status.HTTP_400_BAD_REQUEST,

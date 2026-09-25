@@ -7,13 +7,14 @@ import pytest
 
 from helper_app.disk.imageio_range_copy import allocated_ranges, copy_extents
 from helper_app.models import Firmware
-from helper_app.oci.mapping import map_guest_os
+from helper_app.oci.mapping import map_guest_os, resolve_target_os
 from helper_app.olvm.client import OlvmAuthError, OlvmClient
 from helper_app.olvm.export import OlvmDiskExport
 from helper_app.olvm.inventory import (
     OlvmVmDetails,
     firmware_of,
     guess_guest_os,
+    guest_os_from_vm,
     preflight,
     vm_spec_from_olvm,
 )
@@ -40,6 +41,36 @@ class _Mem:
 def _fleet() -> FakeOlvm:
     raws = {0: make_raw(64 * 1024, seed=3), 1: make_raw(32 * 1024, seed=4)}
     return make_fleet(raws)
+
+
+def test_guest_agent_reports_the_installed_os():
+    vm = {
+        "os": {"type": "other_linux"},
+        "guest_operating_system": {
+            "distribution": "Ubuntu",
+            "family": "Linux",
+            "architecture": "x86_64",
+            "version": {"full_version": "26.04", "major": "26", "minor": "4"},
+        },
+    }
+    guest_id, full_name = guest_os_from_vm(vm)
+    assert (guest_id, full_name) == ("ubuntu64Guest", "Ubuntu 26.04")
+    meta = map_guest_os(guest_id, full_name)
+    assert (meta.operating_system, meta.operating_system_version, meta.version_detected) == ("Ubuntu", "26.04", True)
+    # the configured type is only the fallback
+    assert guest_os_from_vm({"os": {"type": "rhel_9x64"}})[0] == "rhel9_64Guest"
+    windows = guest_os_from_vm({"guest_operating_system": {
+        "distribution": "Windows Server 2022", "family": "Windows",
+        "version": {"full_version": "10.0"},
+    }})
+    assert windows == ("windows2022srv_64Guest", "Microsoft Windows Server 2022")
+
+
+def test_target_os_override_replaces_the_detected_family():
+    meta = resolve_target_os("otherLinux64Guest", "Linux (64-bit)", "Ubuntu", "24.04")
+    assert (meta.operating_system, meta.operating_system_version, meta.family) == ("Ubuntu", "24.04", "linux")
+    kept = resolve_target_os("rhel9_64Guest", "Red Hat Enterprise Linux 9", None, None)
+    assert (kept.operating_system, kept.operating_system_version) == ("Red Hat Enterprise Linux", "9")
 
 
 def test_guest_os_and_firmware_mapping():
