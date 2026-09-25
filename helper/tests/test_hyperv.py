@@ -98,3 +98,43 @@ def test_shutdown_then_hard_turn_off():
     assert fleet.vms[WEB].ops == ["shutdown", "turnoff"]
     assert fleet.vms[WEB].state == "Off"
     assert shut_down(client, WEB, timeout_s=0, sleep=slept.append) == "already_off"
+
+
+def test_winrm_skips_channel_binding_unless_the_certificate_is_checked(monkeypatch):
+    """A self-signed WinRM certificate makes the default channel-binding token fail as a bad password."""
+    import sys
+    import types
+
+    from helper_app.hyperv.client import HypervClient
+
+    calls = []
+
+    class Result:
+        status_code = 0
+        std_out = b"HVHOST\n"
+        std_err = b""
+
+    class FakeSession:
+        def __init__(self, endpoint, auth, **kwargs):
+            calls.append((endpoint, auth, kwargs))
+
+        def run_ps(self, script):
+            return Result()
+
+    winrm = types.ModuleType("winrm")
+    winrm.Session = FakeSession
+    monkeypatch.setitem(sys.modules, "winrm", winrm)
+
+    client = HypervClient("hv.test", r"HOST\Administrator", "secret", use_https=True, port=5986, verify_ssl=False)
+    assert client.probe() == "HVHOST"
+    endpoint, auth, kwargs = calls[0]
+    assert endpoint == "https://hv.test:5986/wsman"
+    assert auth == (r"HOST\Administrator", "secret")
+    assert kwargs["transport"] == "ntlm"
+    assert kwargs["server_cert_validation"] == "ignore"
+    assert kwargs["send_cbt"] is False
+
+    client.verify_ssl = True
+    client.probe()
+    assert calls[1][2]["server_cert_validation"] == "validate"
+    assert calls[1][2]["send_cbt"] is True

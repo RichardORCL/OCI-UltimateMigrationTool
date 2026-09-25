@@ -259,8 +259,11 @@ class HypervClient:
         scheme = "https" if self.use_https else "http"
         endpoint = f"{scheme}://{self.host}:{self.port}/wsman"
         validation = "validate" if self.verify_ssl else "ignore"
+        # Channel binding uses the TLS certificate. A self-signed WinRM cert (the usual Hyper-V
+        # listener, and the default when "verify the certificate" is off) makes Windows answer 401,
+        # which pywinrm reports as rejected credentials. Send the token only when that cert is checked.
         session = winrm.Session(endpoint, auth=(self.username, self.password), transport="ntlm",
-                                server_cert_validation=validation)
+                                server_cert_validation=validation, send_cbt=self.verify_ssl)
         try:
             result = session.run_ps(script)
         except Exception as exc:  # noqa: BLE001
