@@ -1588,8 +1588,8 @@
         : `${from} reports "${vm.guest_full_name || vm.guest_id}". Select the operating system and release to record on the OCI image.`;
     };
     const selectedIsWindows = () => /^windows$/i.test(osNameSel.value);
-    const applyOsChoice = () => {
-      renderOsVersion();
+    const applyVersionChoice = () => {
+      osLabel.classList.toggle("attention", !osLabel.hidden && !osSel.value);
       const win = selectedIsWindows();
       document.getElementById("windows-fieldset").hidden = !win;
       document.getElementById("windows-driver-note").hidden = !win;
@@ -1604,8 +1604,13 @@
         }
       }
     };
+    const applyOsChoice = () => {
+      renderOsVersion();
+      applyVersionChoice();
+    };
     osNameSel.addEventListener("change", applyOsChoice);
-    osSel.addEventListener("change", applyOsChoice);
+    // Rebuilding the list here would put the detected release back and ignore the one just chosen.
+    osSel.addEventListener("change", applyVersionChoice);
     applyOsChoice();
     const isWin = isWindows(vm);
     // Amazon Linux from EC2: the kernel-modules-extra package has to be installed inside the instance before
