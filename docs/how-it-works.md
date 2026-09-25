@@ -112,8 +112,10 @@ After the OCI side is prepared the tool:
   shutdown through the engine, hard stop if it has not powered off after `HELPER_OLVM_SHUTDOWN_TIMEOUT_S`);
 - opens an oVirt image transfer (`direction=download`, `format=raw`) per disk and streams the allocated
   extents from the engine image proxy (`proxy_url`, typically port 54323) onto the attached OCI volumes.
-  Zero extents are skipped. The transfer is finalized when the disk is copied and cancelled if the job
-  fails or is cancelled, so the disk lock is released. No OVA is written.
+  Zero extents are skipped. Current OLVM does not return a signed ticket; the proxy URL is the credential.
+  The transfer is finalized (`POST .../finalize`) when the disk is copied and cancelled
+  (`POST .../cancel`) if the job fails or is cancelled, which is what releases the disk lock. A transfer
+  already holding the disk is cancelled first. No OVA is written.
 
 The tool VM must reach the engine on HTTPS (API and the SSO token endpoint) and the image proxy. Direct
 LUN disks, the hosted-engine VM, disks that are not `ok`, and VMs that are migrating or otherwise

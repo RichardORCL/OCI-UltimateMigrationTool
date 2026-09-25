@@ -1,8 +1,8 @@
 """Download one OLVM disk through an oVirt image transfer.
 
-The engine locks the disk, hands back a proxy URL and a signed ticket, and the bytes are
-read from that URL. The transfer is finalized on success and cancelled on failure or exit
-so the disk lock is released.
+The engine locks the disk and hands back a proxy URL. On current OLVM the URL is the
+credential (there is no signed ticket). The transfer is finalized on success and cancelled
+on failure or exit, using the engine actions, so the disk lock is released.
 """
 
 from __future__ import annotations
@@ -16,7 +16,14 @@ from helper_app.olvm.client import OlvmClient, OlvmError
 
 log = logging.getLogger(__name__)
 
-_FAILED = {"finished_failure", "finalizing_failure", "cancelled", "paused_by_system"}
+_FAILED = {
+    "finished_failure", "finalizing_failure", "finished_cleanup",
+    "cancelled", "cancelled_user", "cancelled_system", "paused_by_system", "paused_system",
+}
+# Phases that still hold the disk. finalizing_* is the engine finishing a close; cancelling
+# again does not help, but the disk is not free yet.
+_BUSY = {"", "initializing", "transferring", "resuming", "paused_user", "paused_system", "paused_by_system"}
+_FINALIZING = {"finalizing_success", "finalizing_failure", "finalizing_cleanup", "cancelling"}
 
 
 @dataclass
@@ -29,6 +36,12 @@ class ImageTransfer:
 def transfer_download_url(transfer: dict) -> str:
     """Prefer the engine image proxy so the tool VM only has to reach the manager."""
     return str(transfer.get("proxy_url") or transfer.get("transfer_url") or "").rstrip("/")
+
+
+def transfer_matches_disk(transfer: dict, disk_id: str) -> bool:
+    image = transfer.get("image") if isinstance(transfer.get("image"), dict) else {}
+    disk = transfer.get("disk") if isinstance(transfer.get("disk"), dict) else {}
+    return disk_id in (str(disk.get("id") or ""), str(image.get("id") or ""))
 
 
 class OlvmDiskExport:
@@ -48,28 +61,36 @@ class OlvmDiskExport:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        for transfer_id in list(self.open_ids):
-            try:
-                self.client.set_transfer_phase(transfer_id, "cancelled")
-            except OlvmError as err:
-                log.warning("could not cancel image transfer %s: %s", transfer_id, err)
-            self._drop(transfer_id)
+        self._cancel_open()
 
     def open(self, disk_id: str) -> ImageTransfer:
         self._cancel_open()
         if self.check_cancel is not None:
             self.check_cancel()
-        created = self.client.create_transfer(disk_id, self.inactivity_timeout_s)
+        self._release_disk(disk_id)
+        try:
+            created = self.client.create_transfer(disk_id, self.inactivity_timeout_s)
+        except OlvmError as exc:
+            if exc.status != 409:
+                raise
+            log.info("disk %s is locked; cancelling its image transfer and retrying", disk_id)
+            self._release_disk(disk_id)
+            created = self.client.create_transfer(disk_id, self.inactivity_timeout_s)
         transfer_id = str(created["id"])
         self.open_ids.append(transfer_id)
         ready = self._wait_until_transferring(transfer_id)
         url = transfer_download_url(ready)
+        if not url:
+            raise OlvmError(f"image transfer {transfer_id} has no proxy URL")
+        # Current OLVM leaves signed_ticket empty. The id inside the proxy URL is the credential.
         ticket = str(ready.get("signed_ticket") or "")
-        if not url or not ticket:
-            raise OlvmError(f"image transfer {transfer_id} has no proxy URL or ticket")
         return ImageTransfer(id=transfer_id, url=url, ticket=ticket)
 
     def refresh(self, transfer: ImageTransfer) -> ImageTransfer:
+        try:
+            self.client.extend_transfer(transfer.id)
+        except OlvmError as exc:
+            log.info("could not extend image transfer %s: %s", transfer.id, exc)
         current = self.client.get_transfer(transfer.id)
         ticket = str(current.get("signed_ticket") or "")
         if ticket:
@@ -80,7 +101,7 @@ class OlvmDiskExport:
         return transfer
 
     def finish(self, transfer: ImageTransfer) -> None:
-        self.client.set_transfer_phase(transfer.id, "finalizing_success")
+        self.client.finalize_transfer(transfer.id)
         self._drop(transfer.id)
 
     def _wait_until_transferring(self, transfer_id: str) -> dict:
@@ -101,10 +122,42 @@ class OlvmDiskExport:
     def _cancel_open(self) -> None:
         for transfer_id in list(self.open_ids):
             try:
-                self.client.set_transfer_phase(transfer_id, "cancelled")
+                self.client.cancel_transfer(transfer_id)
             except OlvmError as err:
                 log.warning("could not cancel image transfer %s: %s", transfer_id, err)
             self._drop(transfer_id)
+
+    def _release_disk(self, disk_id: str) -> None:
+        """Cancel a transfer this disk is still in, then wait until the engine unlocks it."""
+        waiting = False
+        for transfer in self.client.list_transfers():
+            if not transfer_matches_disk(transfer, disk_id):
+                continue
+            phase = str(transfer.get("phase") or "").lower()
+            transfer_id = str(transfer.get("id") or "")
+            if phase in _BUSY and transfer_id:
+                log.info("cancelling image transfer %s holding disk %s (phase %s)",
+                         transfer_id, disk_id, phase or "unknown")
+                self.client.cancel_transfer(transfer_id)
+                waiting = True
+            elif phase in _FINALIZING:
+                waiting = True
+        if waiting:
+            self._wait_disk_unlocked(disk_id)
+
+    def _wait_disk_unlocked(self, disk_id: str) -> None:
+        deadline = time.monotonic() + self.ready_timeout_s
+        while True:
+            if self.check_cancel is not None:
+                self.check_cancel()
+            status = str(self.client.get_disk(disk_id).get("status") or "ok").lower()
+            if status == "ok":
+                return
+            if status not in ("locked", ""):
+                raise OlvmError(f"disk {disk_id} is {status}; it cannot be transferred until it is ok")
+            if time.monotonic() >= deadline:
+                raise OlvmError(f"disk {disk_id} is still locked")
+            self.sleep(1.0)
 
     def _drop(self, transfer_id: str) -> None:
         self.open_ids = [item for item in self.open_ids if item != transfer_id]

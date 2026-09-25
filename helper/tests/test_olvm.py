@@ -19,7 +19,19 @@ from helper_app.olvm.inventory import (
     vm_spec_from_olvm,
 )
 
-from .fake_olvm import HOSTED, LOCKED, LUN, MOVING, WEB, FakeOlvm, extents_of, make_fleet
+from .fake_olvm import (
+    ENGINE,
+    HOSTED,
+    LOCKED,
+    LUN,
+    MOVING,
+    PASSWORD,
+    USER,
+    WEB,
+    FakeOlvm,
+    extents_of,
+    make_fleet,
+)
 from .test_vmdk_stream import make_raw
 
 
@@ -133,17 +145,41 @@ def test_extent_copy_skips_zeros():
 def test_export_exit_cancels_open_transfer():
     class Stub:
         def __init__(self):
-            self.phases = []
+            self.cancelled = []
 
-        def set_transfer_phase(self, transfer_id, phase):
-            self.phases.append((transfer_id, phase))
+        def cancel_transfer(self, transfer_id):
+            self.cancelled.append(transfer_id)
 
     stub = Stub()
     export = OlvmDiskExport(stub, inactivity_timeout_s=10, ready_timeout_s=1)
     export.open_ids.append("transfer-1")
     export.__exit__(RuntimeError, RuntimeError("boom"), None)
-    assert stub.phases == [("transfer-1", "cancelled")]
+    assert stub.cancelled == ["transfer-1"]
     assert export.open_ids == []
+
+
+def test_download_uses_proxy_url_and_clears_a_disk_lock():
+    """OLVM 4.5 omits signed_ticket and rejects PUT phase changes. The proxy URL is the credential,
+    and a disk locked by an earlier transfer has to be cancelled before a new download."""
+    fleet = _fleet()
+    fleet.omit_ticket = True
+    fleet.require_ticket = False
+    client = fleet.client_factory(ENGINE, USER, PASSWORD, False)
+    disk_id = "disk-web-os"
+    stale = client.create_transfer(disk_id, 60)
+    export = OlvmDiskExport(client, inactivity_timeout_s=30, ready_timeout_s=5, sleep=lambda _s: None)
+    with export:
+        transfer = export.open(disk_id)
+        assert transfer.id != stale["id"]
+        assert transfer.ticket == ""
+        assert transfer.url.startswith("https://olvm.test:54323/images/")
+        assert client.image_extents(transfer.url, transfer.ticket)
+        assert len(client.read_image(transfer.url, transfer.ticket, 0, 16)) == 16
+        export.finish(transfer)
+    assert f"POST /ovirt-engine/api/imagetransfers/{stale['id']}/cancel" in fleet.requests
+    assert not any(line.startswith("PUT ") and "/imagetransfers/" in line for line in fleet.requests)
+    assert fleet.transfers_cancelled == [disk_id]
+    assert fleet.transfers_finished == [disk_id]
 
 
 def _token_client(handler) -> OlvmClient:

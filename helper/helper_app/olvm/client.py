@@ -89,6 +89,18 @@ def parse_engine_url(raw: str) -> tuple[str, str]:
     return base, host
 
 
+def _image_headers(ticket: str) -> dict[str, str]:
+    """OLVM 4.5 authorizes a download with the unguessable id in the image URL.
+
+    ``signed_ticket`` was removed after 4.2. Older engines still return one, and those
+    downloads send it as a bearer token.
+    """
+    headers: dict[str, str] = {}
+    if ticket:
+        headers["Authorization"] = f"Bearer {ticket}"
+    return headers
+
+
 def _as_list(value: Any) -> list:
     if value is None:
         return []
@@ -250,16 +262,34 @@ class OlvmClient:
         data = self.request("GET", f"{API_PREFIX}/imagetransfers/{transfer_id}")
         return data if isinstance(data, dict) else {}
 
-    def set_transfer_phase(self, transfer_id: str, phase: str) -> None:
+    def list_transfers(self) -> list[dict]:
+        data = self.request("GET", API_PREFIX + "/imagetransfers")
+        return _as_list((data or {}).get("image_transfer") if isinstance(data, dict) else None)
+
+    def get_disk(self, disk_id: str) -> dict:
+        data = self.request("GET", f"{API_PREFIX}/disks/{disk_id}")
+        return data if isinstance(data, dict) else {}
+
+    def cancel_transfer(self, transfer_id: str) -> None:
+        """Stop a transfer and release its disk lock. OLVM 4.5 answers 405 to a phase PUT."""
+        self._transfer_action(transfer_id, "cancel")
+
+    def finalize_transfer(self, transfer_id: str) -> None:
+        self._transfer_action(transfer_id, "finalize")
+
+    def extend_transfer(self, transfer_id: str) -> None:
+        self._transfer_action(transfer_id, "extend")
+
+    def _transfer_action(self, transfer_id: str, action: str) -> None:
         try:
-            self.request("PUT", f"{API_PREFIX}/imagetransfers/{transfer_id}", json={"phase": phase})
+            self.request("POST", f"{API_PREFIX}/imagetransfers/{transfer_id}/{action}", json={})
         except OlvmError as exc:
             if exc.status in (400, 404, 409):
-                log.info("image transfer %s phase %s: %s", transfer_id, phase, exc)
+                log.info("image transfer %s %s: %s", transfer_id, action, exc)
                 return
             raise
 
-    def image_extents(self, image_url: str, ticket: str) -> list[dict]:
+    def image_extents(self, image_url: str, ticket: str = "") -> list[dict]:
         body = self._image_json(image_url.rstrip("/") + "/extents", ticket)
         if isinstance(body, dict):
             body = body.get("extents") or []
@@ -269,7 +299,8 @@ class OlvmClient:
 
     def read_image(self, image_url: str, ticket: str, start: int, length: int) -> bytes:
         end = start + length - 1
-        headers = {"Authorization": f"Bearer {ticket}", "Range": f"bytes={start}-{end}"}
+        headers = _image_headers(ticket)
+        headers["Range"] = f"bytes={start}-{end}"
         try:
             resp = self.http.get(image_url, headers=headers)
         except httpx.HTTPError as exc:
@@ -282,7 +313,8 @@ class OlvmClient:
         return resp.content
 
     def _image_json(self, url: str, ticket: str) -> Any:
-        headers = {"Authorization": f"Bearer {ticket}", "Accept": "application/json"}
+        headers = _image_headers(ticket)
+        headers["Accept"] = "application/json"
         try:
             resp = self.http.get(url, headers=headers)
         except httpx.HTTPError as exc:

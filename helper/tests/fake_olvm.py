@@ -124,6 +124,8 @@ class FakeOlvm:
         self.transfers_cancelled: list[str] = []
         self._transfers: dict[str, dict] = {}
         self._lock = threading.Lock()
+        self.omit_ticket = False
+        self.require_ticket = True
         self.transport = httpx.MockTransport(self.handle)
 
     def client_factory(self, base: str, username: str, password: str, verify_ssl: bool) -> OlvmClient:
@@ -162,11 +164,21 @@ class FakeOlvm:
             return _json({"status": "complete"})
         if path == "/ovirt-engine/api/imagetransfers" and request.method == "POST":
             return self._create_transfer(request)
-        if path.startswith("/ovirt-engine/api/imagetransfers/"):
-            transfer_id = path.rsplit("/", 1)[-1]
-            if request.method == "GET":
+        if path == "/ovirt-engine/api/imagetransfers" and request.method == "GET":
+            return self._list_transfers()
+        if request.method == "GET" and path.startswith("/ovirt-engine/api/disks/"):
+            disk_id = path.rsplit("/", 1)[-1]
+            return _json({"id": disk_id, "status": "locked" if self._disk_locked(disk_id) else "ok"})
+        prefix = "/ovirt-engine/api/imagetransfers/"
+        if path.startswith(prefix):
+            parts = path[len(prefix):].split("/")
+            transfer_id = parts[0]
+            action = parts[1] if len(parts) > 1 else ""
+            if request.method == "GET" and not action:
                 return self._get_transfer(transfer_id)
-            if request.method == "PUT":
+            if request.method == "POST" and action in ("cancel", "finalize", "extend"):
+                return self._action(transfer_id, action)
+            if request.method == "PUT" and not action:
                 return self._update_transfer(transfer_id, request)
         return _json({"fault": {"reason": "Not Found", "detail": path}}, status=404)
 
@@ -178,9 +190,32 @@ class FakeOlvm:
             return _json({"error": "invalid_grant", "error_description": "invalid user name or password"}, status=401)
         return _json({"access_token": "olvm-token", "token_type": "bearer", "expires_in": 3600})
 
+    def _disk_locked(self, disk_id: str) -> bool:
+        busy = {"initializing", "transferring", "resuming", "paused_user", "paused_system"}
+        with self._lock:
+            return any(item["disk_id"] == disk_id and item["phase"] in busy for item in self._transfers.values())
+
+    def _list_transfers(self) -> httpx.Response:
+        with self._lock:
+            items = [{
+                "id": transfer_id,
+                "phase": item["phase"],
+                "disk": {"id": item["disk_id"]},
+                "image": {"id": item["disk_id"]},
+            } for transfer_id, item in self._transfers.items()]
+        return _json({"image_transfer": items})
+
     def _create_transfer(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content.decode() or "{}")
         disk_id = str((body.get("disk") or {}).get("id") or "")
+        if self._disk_locked(disk_id):
+            return _json({
+                "fault": {
+                    "reason": "Operation Failed",
+                    "detail": "[Cannot transfer Virtual Disk: The following disks are locked: disk. "
+                              "Please try again in a few minutes.]",
+                },
+            }, status=409)
         transfer_id = uuid.uuid4().hex
         with self._lock:
             self._transfers[transfer_id] = {"disk_id": disk_id, "phase": "initializing"}
@@ -195,18 +230,34 @@ class FakeOlvm:
                 transfer["phase"] = "transferring"
             phase = transfer["phase"]
             disk_id = transfer["disk_id"]
-        return _json({
+        body = {
             "id": transfer_id,
             "phase": phase,
             "proxy_url": f"https://olvm.test:54323/images/{transfer_id}",
             "transfer_url": f"https://host.internal:54322/images/{transfer_id}",
-            "signed_ticket": f"ticket-{transfer_id}",
             "disk": {"id": disk_id},
-        })
+            "image": {"id": disk_id},
+        }
+        if not self.omit_ticket:
+            body["signed_ticket"] = f"ticket-{transfer_id}"
+        return _json(body)
+
+    def _action(self, transfer_id: str, action: str) -> httpx.Response:
+        if action == "extend":
+            with self._lock:
+                transfer = self._transfers.get(transfer_id)
+                if transfer is None:
+                    return _json({"fault": {"reason": "Not Found"}}, status=404)
+                phase = transfer["phase"]
+            return _json({"id": transfer_id, "phase": phase})
+        phase = "cancelled" if action == "cancel" else "finalizing_success"
+        return self._set_phase(transfer_id, phase)
 
     def _update_transfer(self, transfer_id: str, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content.decode() or "{}")
-        phase = str(body.get("phase") or "")
+        return self._set_phase(transfer_id, str(body.get("phase") or ""))
+
+    def _set_phase(self, transfer_id: str, phase: str) -> httpx.Response:
         with self._lock:
             transfer = self._transfers.get(transfer_id)
             if transfer is None:
@@ -221,9 +272,13 @@ class FakeOlvm:
 
     def _image(self, request: httpx.Request, path: str) -> httpx.Response:
         ticket = request.headers.get("authorization") or ""
-        if not ticket.startswith("Bearer ticket-"):
-            return _json({"fault": {"reason": "Unauthorized"}}, status=401)
-        transfer_id = ticket.removeprefix("Bearer ticket-")
+        path_id = path.strip("/").split("/")[1]
+        if self.require_ticket:
+            if not ticket.startswith("Bearer ticket-"):
+                return _json({"fault": {"reason": "Unauthorized"}}, status=401)
+            transfer_id = ticket.removeprefix("Bearer ticket-")
+        else:
+            transfer_id = path_id
         with self._lock:
             transfer = self._transfers.get(transfer_id)
         if transfer is None:

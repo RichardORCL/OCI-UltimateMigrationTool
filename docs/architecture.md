@@ -120,8 +120,10 @@ lowering it never interrupts a running one), the rest stay **QUEUED** ("Waiting 
      within `HELPER_OLVM_SHUTDOWN_TIMEOUT_S`; `power_off_result` is `guest_shutdown`, `powered_off` or
      `already_off`). Each disk then gets an image transfer (`POST /imagetransfers`, `format=raw`). The
      copy reads `/extents` from the engine proxy URL and writes the non-zero ranges
-     (`disk/imageio_range_copy.py`, `HELPER_OLVM_RANGE_CHUNK_BYTES`, `HELPER_OLVM_RANGE_WORKERS`). The
-     transfer is finalized on success and cancelled on failure, retry or exit so the disk lock is released.
+     (`disk/imageio_range_copy.py`, `HELPER_OLVM_RANGE_CHUNK_BYTES`, `HELPER_OLVM_RANGE_WORKERS`).
+     OLVM 4.5 authorizes that download with the proxy URL itself. The transfer is finalized
+     (`POST /imagetransfers/{id}/finalize`) on success and cancelled (`POST .../cancel`) on failure,
+     retry or exit; a phase PUT is not used, because this engine answers 405 and would leave the disk locked.
    - **Azure jobs** (`MigrationRunner._run_azure`) replace the NFC part of this phase:
      - *deallocate* mode: a VM that is still running (or stopped but allocated) and whose job carries the
        operator's `power_off_source` confirmation is deallocated now (`POST .../deallocate`, polled up to
