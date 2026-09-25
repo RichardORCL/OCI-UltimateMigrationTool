@@ -109,17 +109,31 @@ def test_winrm_skips_channel_binding_unless_the_certificate_is_checked(monkeypat
 
     calls = []
 
-    class Result:
-        status_code = 0
-        std_out = b"HVHOST\n"
-        std_err = b""
+    class FakeProtocol:
+        def open_shell(self, **kwargs):
+            self.opened = kwargs
+            return "shell"
+
+        def run_command(self, shell_id, command, arguments=(), **kwargs):
+            self.command = (command, list(arguments), kwargs)
+            return "command"
+
+        def send_command_input(self, shell_id, command_id, data, end=False):
+            self.stdin = (data, end)
+
+        def get_command_output(self, shell_id, command_id):
+            return b"HVHOST\n", b"", 0
+
+        def cleanup_command(self, shell_id, command_id):
+            return None
+
+        def close_shell(self, shell_id):
+            self.closed = True
 
     class FakeSession:
         def __init__(self, endpoint, auth, **kwargs):
-            calls.append((endpoint, auth, kwargs))
-
-        def run_ps(self, script):
-            return Result()
+            self.protocol = FakeProtocol()
+            calls.append((endpoint, auth, kwargs, self.protocol))
 
     winrm = types.ModuleType("winrm")
     winrm.Session = FakeSession
@@ -127,12 +141,19 @@ def test_winrm_skips_channel_binding_unless_the_certificate_is_checked(monkeypat
 
     client = HypervClient("hv.test", r"HOST\Administrator", "secret", use_https=True, port=5986, verify_ssl=False)
     assert client.probe() == "HVHOST"
-    endpoint, auth, kwargs = calls[0]
+    endpoint, auth, kwargs, protocol = calls[0]
     assert endpoint == "https://hv.test:5986/wsman"
     assert auth == (r"HOST\Administrator", "secret")
     assert kwargs["transport"] == "ntlm"
     assert kwargs["server_cert_validation"] == "ignore"
     assert kwargs["send_cbt"] is False
+    command, arguments, command_kwargs = protocol.command
+    assert command.lower().endswith("powershell.exe")
+    assert command_kwargs["skip_cmd_shell"] is True
+    assert "encodedcommand" not in " ".join(arguments).lower()
+    assert "Get-VMHost" in protocol.stdin[0]
+    assert protocol.stdin[1] is True
+    assert protocol.closed is True
 
     client.verify_ssl = True
     client.probe()

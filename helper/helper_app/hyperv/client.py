@@ -189,6 +189,42 @@ def _decode(payload: bytes | str) -> str:
     return payload.decode("utf-8", errors="replace")
 
 
+class _PsResult:
+    def __init__(self, std_out: bytes, std_err: bytes, status_code: int):
+        self.std_out = std_out
+        self.std_err = std_err
+        self.status_code = status_code
+
+
+def _powershell_on_stdin(session, script: str) -> _PsResult:
+    """Run PowerShell with the script on stdin, not on the command line."""
+    protocol = session.protocol
+    shell_id = protocol.open_shell(codepage=65001)
+    command_id = None
+    try:
+        command_id = protocol.run_command(
+            shell_id,
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            ["-NoProfile", "-NonInteractive", "-Command", "-"],
+            skip_cmd_shell=True,
+        )
+        protocol.send_command_input(shell_id, command_id, script + "\r\n", end=True)
+        std_out, std_err, status_code = protocol.get_command_output(shell_id, command_id)
+    finally:
+        if command_id is not None:
+            try:
+                protocol.cleanup_command(shell_id, command_id)
+            except Exception:
+                log.debug("WinRM command cleanup failed", exc_info=True)
+        try:
+            protocol.close_shell(shell_id)
+        except Exception:
+            log.debug("WinRM shell close failed", exc_info=True)
+    if std_err and hasattr(session, "_clean_error_msg"):
+        std_err = session._clean_error_msg(std_err)
+    return _PsResult(std_out, std_err, status_code)
+
+
 class HypervClient:
     """One WinRM login. ``runner(script) -> stdout`` is set by tests instead of a real host."""
 
@@ -265,7 +301,9 @@ class HypervClient:
         session = winrm.Session(endpoint, auth=(self.username, self.password), transport="ntlm",
                                 server_cert_validation=validation, send_cbt=self.verify_ssl)
         try:
-            result = session.run_ps(script)
+            # -EncodedCommand is utf-16 base64 on the command line. cmd.exe rejects anything past
+            # 8191 characters, and the inventory script already exceeds that ("The command line is too long").
+            result = _powershell_on_stdin(session, script)
         except Exception as exc:  # noqa: BLE001
             text = str(exc).lower()
             if any(word in text for word in ("401", "cred", "unauthor", "logon", "forbidden")):
