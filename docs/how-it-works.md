@@ -120,6 +120,26 @@ After the OCI side is prepared the tool:
   (`POST .../cancel`) if the job fails or is cancelled, which is what releases the disk lock. A transfer
   already holding the disk is cancelled first. No OVA is written.
 
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant H as Migration Tool VM (OCI)
+    participant E as OLVM engine
+    participant OCI as OCI APIs
+    B->>H: Log in with engine URL and password
+    H->>E: OAuth password grant
+    B->>H: List VMs, inspect, start migration
+    H->>OCI: Provision volumes on the tool VM
+    H->>E: Shutdown then stop if still up
+    loop each disk
+        H->>E: Image transfer download raw
+        E-->>H: Allocated extents via image proxy
+        H->>H: pwrite onto attached OCI volume
+    end
+    H->>H: Linux guest fix-ups
+    H->>OCI: Attach to target and start
+```
+
 The tool VM must reach the engine on HTTPS (API and the SSO token endpoint). The default download also
 needs the image proxy; a direct KVM download needs TCP 54322 to the host OLVM selects. LUN disks, the
 hosted-engine VM, disks that are not `ok`, and VMs that are migrating or otherwise transient are refused
