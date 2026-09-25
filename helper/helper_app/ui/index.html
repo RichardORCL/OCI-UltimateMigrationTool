@@ -42,6 +42,12 @@
             and the migration tool copies their disks into OCI instances.</p>
           <span class="button primary">Log in to vCenter</span>
         </a>
+        <a class="card start-choice" href="#/olvm/login" id="start-olvm">
+          <h3>Oracle Linux Virtualization Manager</h3>
+          <p>Migrate virtual machines from OLVM to OCI: log in to the engine, pick the VMs, and the migration
+            tool shuts them down and copies their disks into OCI instances.</p>
+          <span class="button primary">Log in to OLVM</span>
+        </a>
         <div class="card start-choice">
           <h3>Microsoft Azure</h3>
           <p>Migrate virtual machines from Azure to OCI: log in with a service principal, pick the VMs, and the migration
@@ -546,6 +552,34 @@
         <div class="actions">
           <span id="login-error" class="error"></span>
           <button type="submit" class="primary" id="login-btn">Log in</button>
+        </div>
+      </form>
+    </section>
+  </template>
+
+  <!-- ------------------------------------------------------------------ OLVM login -->
+  <template id="tpl-olvm-login">
+    <section class="card login">
+      <h2>Log in to OLVM</h2>
+      <p class="muted">Use an Oracle Linux Virtualization Manager (or oVirt) engine account. It needs permission
+        to list virtual machines and to download their disks (image transfer).</p>
+      <form id="olvm-login-form" class="form" autocomplete="on">
+        <label>Engine
+          <input name="engine" type="text" required list="olvm-recent" placeholder="https://olvm.example.com" autocapitalize="off" spellcheck="false">
+          <datalist id="olvm-recent"></datalist>
+          <small>Host name or URL of the OLVM engine. The migration tool VM must reach it on HTTPS, and the image proxy (typically port 54323) for the disk download.</small>
+        </label>
+        <label class="check"><input type="checkbox" name="verify_ssl"> Verify the server certificate</label>
+        <small class="form-hint">Leave off for the engine's internal certificate. When on, the certificate must be issued by a CA the migration tool VM trusts; the same setting is used for the disk download.</small>
+        <label>User name
+          <input name="username" type="text" required placeholder="admin@internal">
+        </label>
+        <label>Password
+          <input name="password" type="password" required>
+        </label>
+        <div class="actions">
+          <span id="olvm-login-error" class="error"></span>
+          <button type="submit" class="primary" id="olvm-login-btn">Log in</button>
         </div>
       </form>
     </section>

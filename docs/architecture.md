@@ -6,11 +6,11 @@ The whole tool is one service, the **OCI Ultimate Migration Tool**, running on a
 (the *OCI Migration Tool VM*):
 
 - a web UI (`/ui`) and REST API (`/api`) served by FastAPI/uvicorn over TLS on port 8443;
-- a source client chosen at login: pyVmomi for vCenter/ESXi, or a small `httpx` REST client for Azure
-  (Entra ID + ARM), AWS (SigV4: STS, EC2, EBS Direct) or Google Cloud (service-account JWT: Compute
-  Engine, Cloud Build, Cloud Storage);
-- the migration engine that provisions the OCI target, pulls the disks from the source (NFC, Azure page
-  blob, EBS Direct, GCS export tarball, or an OVA/OVF in Object Storage) and writes them onto OCI
+- a source client chosen at login: pyVmomi for vCenter/ESXi, or a small `httpx` REST client for OLVM
+  (oVirt API 4 and the image proxy), Azure (Entra ID + ARM), AWS (SigV4: STS, EC2, EBS Direct) or
+  Google Cloud (service-account JWT: Compute Engine, Cloud Build, Cloud Storage);
+- the migration engine that provisions the OCI target, pulls the disks from the source (NFC, OLVM image
+  transfer, Azure page blob, EBS Direct, GCS export tarball, or an OVA/OVF in Object Storage) and writes them onto OCI
   volumes attached to the Migration Tool itself.
 
 There is no agent in the source environment and no shared secret: the source platform's own RBAC
@@ -39,9 +39,9 @@ Migration Tool may create.
 
 ## Job lifecycle
 
-`Job.kind` is `vmware`, `azure`, `aws`, `gcp`, `ova`, `ovaexport` or `iso`. Source-specific state
-lives on the job (`Job.azure`, `Job.aws`, `Job.gcp`, `Job.ova`, `Job.iso`): capture mode, snapshot
-IDs, export SAS, GCS objects, and so on.
+`Job.kind` is `vmware`, `olvm`, `azure`, `aws`, `gcp`, `ova`, `ovaexport` or `iso`. Source-specific state
+lives on the job (`Job.olvm` holds the engine host, cluster and disk ids; `Job.azure`, `Job.aws`, `Job.gcp`,
+`Job.ova`, `Job.iso` hold capture mode, snapshot IDs, export SAS, GCS objects, and so on).
 `Job.phase`: `QUEUED -> PROVISIONING -> EXPORTING -> FINALIZING -> COMPLETED | FAILED | CANCELLED`.
 `Job.step`/`Job.message` carry the fine-grained progress; `Job.step_percent` is set while a step is backed
 by an OCI work request with a `percentComplete` (the seed image import polls its `CreateImage` work
@@ -115,6 +115,13 @@ lowering it never interrupts a running one), the rest stay **QUEUED** ("Waiting 
      grains are inflated and written; decoder/writer errors are re-raised on the download thread
      with their original type. A failure restarts the disk from the beginning, up to
      `HELPER_DISK_RETRY_ATTEMPTS` times; the lease is completed or aborted on exit.
+   - **OLVM jobs** (`MigrationRunner._run_olvm`) replace the NFC part of this phase: a VM that is still
+     up and whose job carries `power_off_source` is shut down (`shutdown`, then `stop` if it is not down
+     within `HELPER_OLVM_SHUTDOWN_TIMEOUT_S`; `power_off_result` is `guest_shutdown`, `powered_off` or
+     `already_off`). Each disk then gets an image transfer (`POST /imagetransfers`, `format=raw`). The
+     copy reads `/extents` from the engine proxy URL and writes the non-zero ranges
+     (`disk/imageio_range_copy.py`, `HELPER_OLVM_RANGE_CHUNK_BYTES`, `HELPER_OLVM_RANGE_WORKERS`). The
+     transfer is finalized on success and cancelled on failure, retry or exit so the disk lock is released.
    - **Azure jobs** (`MigrationRunner._run_azure`) replace the NFC part of this phase:
      - *deallocate* mode: a VM that is still running (or stopped but allocated) and whose job carries the
        operator's `power_off_source` confirmation is deallocated now (`POST .../deallocate`, polled up to
@@ -218,13 +225,13 @@ UI requires a choice before starting and lets you change it afterwards
 ## Security
 
 - Credentials are never stored on disk; the Migration Tool holds the source session (vCenter cookie,
-  Azure/AWS/GCP secrets and tokens) per logged-in user in memory only. The browser may remember
+  Azure/AWS/GCP secrets and tokens, OLVM password and bearer token) per logged-in user in memory only. The browser may remember
   non-secret fields (last vCenter host, Azure tenant/client ID), never passwords or keys.
 - The API is protected by the session cookie (HttpOnly, SameSite=strict, `Secure` unless
   `HELPER_COOKIE_SECURE=false` for local development). An optional UI password gates the whole UI.
 - OCI access uses the Migration Tool's instance principal; the Terraform stack scopes the policy to a
   compartment (`policy_scope_compartment_ocid`).
-- vCenter TLS verification is chosen per login (*Verify the server certificate*). Azure, AWS and
+- vCenter and OLVM TLS verification are chosen per login (*Verify the server certificate*). Azure, AWS and
   Google Cloud TLS is always verified (public CA certificates).
 - Required source privileges are listed per platform in [how-it-works.md](how-it-works.md). Export
-  access (NFC lease, Azure SAS, AWS/GCP snapshots, GCS objects) is released when the job ends.
+  access (NFC lease, OLVM image transfer, Azure SAS, AWS/GCP snapshots, GCS objects) is released when the job ends.

@@ -122,7 +122,7 @@ Then open `https://<tool-vm-ip>:8443/` in a browser and accept the self-signed c
 visit asks whether to protect the web UI with a password (you can also set, change or remove it later
 on **Setup**). If a password is set, unlock with it before the start page.
 
-The start page lists every option (VMware, Azure, AWS, Google Cloud, OVA import, ISO, Remote Console,
+The start page lists every option (VMware, OLVM, Azure, AWS, Google Cloud, OVA import, ISO, Remote Console,
 export to OVF). Pick one and follow its login or form. Source credentials are entered there, not in
 the stack; one Migration Tool VM can serve several sources and several accounts. The *(i)* buttons
 next to the cloud cards show how to prepare the service principal, IAM user or service account.
@@ -132,6 +132,9 @@ From the Migration Tool VM you can confirm outbound reach to a source, for examp
 ```bash
 # VMware
 ssh opc@<tool-vm-ip> curl -k -o /dev/null -w '%{http_code}\n' https://<vcenter-or-esxi>/sdk
+# OLVM (engine API, and the image proxy used for the disk download)
+curl -k -sI https://<olvm-engine>/ovirt-engine/api | head -1
+curl -k -sI https://<olvm-engine>:54323/ | head -1
 # Azure
 curl -sI https://login.microsoftonline.com | head -1
 curl -sI https://management.azure.com | head -1

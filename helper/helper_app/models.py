@@ -469,7 +469,7 @@ class GuestFixup(BaseModel):
     log: list[str] = Field(default_factory=list, description="Step-by-step notes for diagnostics")
 
 
-JobKind = Literal["vmware", "iso", "ova", "ovaexport", "azure", "gcp", "aws"]
+JobKind = Literal["vmware", "iso", "ova", "ovaexport", "azure", "gcp", "aws", "olvm"]
 
 AzureCaptureMode = Literal["deallocate", "snapshot"]
 GcpCaptureMode = Literal["stop", "snapshot"]
@@ -517,6 +517,14 @@ class GcpSourceInfo(BaseModel):
                                    description="Object names under export_bucket written by this job")
 
 
+class OlvmSourceInfo(BaseModel):
+    """Where an OLVM job's VM lives. Disks are downloaded after the VM is shut down."""
+
+    engine_host: str
+    cluster: str = ""
+    disk_ids: list[str] = Field(default_factory=list, description="Image disk IDs, in DiskSpec order")
+
+
 class AwsSourceInfo(BaseModel):
     """Where an AWS job's instance lives and how its EBS volumes are captured."""
 
@@ -535,13 +543,13 @@ class AwsSourceInfo(BaseModel):
 
 class Job(BaseModel):
     id: str
-    kind: JobKind = "vmware"  # vmware: VM from vSphere; iso/ova: Object Storage; azure: VM from Azure
+    kind: JobKind = "vmware"  # vmware: VM from vSphere; iso/ova: Object Storage; azure/gcp/aws/olvm: other sources
     phase: JobPhase = JobPhase.QUEUED
     step: str = ""
     step_percent: Optional[int] = None  # progress of the current step when OCI reports one (work requests)
     message: str = ""
     error: Optional[str] = None
-    vm: Optional[VmSpec] = None  # the source VM for VMware, Azure, GCP or AWS jobs
+    vm: Optional[VmSpec] = None  # the source VM for VMware, Azure, GCP, AWS or OLVM jobs
     iso: Optional[IsoSpec] = None  # the installer ISO (iso jobs)
     iso_image_id: Optional[str] = None  # custom image imported from the ISO (iso jobs)
     ova: Optional[OvaSpec] = None  # the OVA object (ova jobs)
@@ -551,6 +559,7 @@ class Job(BaseModel):
     azure: Optional[AzureSourceInfo] = None  # subscription / resource group / capture mode (azure jobs)
     gcp: Optional[GcpSourceInfo] = None  # project / zone / GCS export (gcp jobs)
     aws: Optional[AwsSourceInfo] = None  # account / region / capture mode (aws jobs)
+    olvm: Optional[OlvmSourceInfo] = None  # engine / cluster / disk ids (olvm jobs)
     vcenter_host: str = ""  # vCenter the VM was inspected on ("host" or "host:port"); tagged onto the instance
     target: OciTarget
     power_off_source: bool = False  # VM was powered on when the job was created; shut it down before the export
@@ -710,6 +719,18 @@ class CreateAzureJobRequest(BaseModel):
     )
 
 
+class CreateOlvmJobRequest(BaseModel):
+    """Migrate an OLVM VM (needs an OLVM login on the session)."""
+
+    vm_id: str = Field(description="OLVM virtual machine id")
+    target: OciTarget
+    power_off_source: bool = Field(
+        default=False,
+        description="Required for a powered-on VM: the user confirmed that the migration tool shuts it down "
+                    "right before the disk export (guest shutdown, hard stop as fallback)",
+    )
+
+
 class CreateAwsJobRequest(BaseModel):
     """Migrate an EC2 instance (needs an AWS login on the session)."""
 
@@ -769,6 +790,16 @@ class GcpLoginRequest(BaseModel):
     export_bucket: str = Field(description="GCS bucket for temporary snapshot exports (objects deleted after the job)")
 
 
+class OlvmLoginRequest(BaseModel):
+    engine_url: str = Field(description="OLVM engine, for example https://olvm.example.com")
+    username: str = Field(description="Engine user, for example admin@internal")
+    password: str
+    verify_ssl: bool = Field(
+        default=False,
+        description="Verify the engine TLS certificate (API and image-proxy download)",
+    )
+
+
 class AwsLoginRequest(BaseModel):
     access_key_id: str = Field(description="IAM user access key ID (AKIA...)")
     secret_access_key: str
@@ -792,6 +823,7 @@ class SessionInfo(BaseModel):
     aws_access_key_id: str = ""
     aws_region: str = ""
     aws_account_id: str = ""
+    olvm_engine: str = ""  # set when the session is an OLVM engine login
     created_at: datetime
     expires_at: datetime
 

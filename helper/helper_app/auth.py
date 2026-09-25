@@ -66,6 +66,14 @@ async def require_gcp_session(request: Request) -> UserSession:
     return session
 
 
+async def require_olvm_session(request: Request) -> UserSession:
+    """A session with an OLVM engine login behind it (OLVM inventory and migrations)."""
+    session = await require_session(request)
+    if session.olvm is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "this function needs an OLVM login")
+    return session
+
+
 async def require_aws_session(request: Request) -> UserSession:
     """A session with an AWS IAM login behind it (EC2 inventory and migrations)."""
     session = await require_session(request)

@@ -239,6 +239,7 @@
   const isAzure = (job) => job.kind === "azure";
   const isGcp = (job) => job.kind === "gcp";
   const isAws = (job) => job.kind === "aws";
+  const isOlvm = (job) => job.kind === "olvm";
   const sourceTypeLabel = (job) => {
     if (isOvaExport(job)) return "OCI export";
     if (isOva(job)) return "OVA";
@@ -246,6 +247,7 @@
     if (isAzure(job)) return "Azure";
     if (isGcp(job)) return "Google Cloud";
     if (isAws(job)) return "AWS";
+    if (isOlvm(job)) return "OLVM";
     return "VMware";
   };
   const SVG_NS = "http://www.w3.org/2000/svg";
@@ -278,7 +280,8 @@
   const hasAzure = (me) => !!(me && me.azure_tenant_id);
   const hasGcp = (me) => !!(me && me.gcp_client_email);
   const hasAws = (me) => !!(me && me.aws_account_id);
-  const hasVcenter = (me) => !!(me && !me.anonymous && !me.azure_tenant_id && !me.gcp_client_email && !me.aws_account_id);
+  const hasOlvm = (me) => !!(me && me.olvm_engine);
+  const hasVcenter = (me) => !!(me && !me.anonymous && !me.azure_tenant_id && !me.gcp_client_email && !me.aws_account_id && !me.olvm_engine);
   const gcpZone = (id) => { const m = /\/zones\/([^/]+)\/instances\//i.exec(id || ""); return m ? m[1] : ""; };
   // Azure resource IDs are lower-cased by the API; the resource group is the fourth path element
   const azureResourceGroup = (id) => { const m = /\/resourcegroups\/([^/]+)/i.exec(id || ""); return m ? m[1] : ""; };
@@ -297,6 +300,7 @@
     if (hasGcp(me)) return "#/gcp/vms";
     if (hasAzure(me)) return "#/azure/vms";
     if (hasAws(me)) return "#/aws/vms";
+    if (hasOlvm(me)) return "#/olvm/vms";
     if (hasVcenter(me)) return "#/vms";
     return null;
   };
@@ -314,11 +318,13 @@
     const azure = hasAzure(me);
     const gcp = hasGcp(me);
     const aws = hasAws(me);
+    const olvm = hasOlvm(me);
     const subs = azure ? (me.azure_subscriptions || []).map((s) => s.name || s.id) : [];
     const label = anonymous ? "not logged in"
       : gcp ? `GCP: ${me.gcp_export_bucket || me.gcp_project_id}`
         : azure ? `Azure: ${subs.length ? subs.slice(0, 2).join(", ") + (subs.length > 2 ? ` +${subs.length - 2}` : "") : me.azure_tenant_id}`
           : aws ? `AWS: ${me.aws_account_id} (${me.aws_region})`
+            : olvm ? `${me.username} @ ${me.olvm_engine}`
             : `${me.username} @ ${me.vcenter_host}${me.vcenter_port && me.vcenter_port !== 443 ? ":" + me.vcenter_port : ""}`;
     const detailTitle = gcp ? `service account ${me.gcp_client_email}\nexport bucket: ${me.gcp_export_bucket}`
       : azure ? `service principal ${me.azure_client_id} in tenant ${me.azure_tenant_id}${subs.length ? `\nsubscriptions: ${subs.join(", ")}` : ""}`
@@ -423,6 +429,7 @@
     if (hasAzure(state.me)) document.getElementById("start-azure").href = "#/azure/vms";
     if (hasGcp(state.me)) document.getElementById("start-gcp").href = "#/gcp/vms";
     if (hasAws(state.me)) document.getElementById("start-aws").href = "#/aws/vms";
+    if (hasOlvm(state.me)) document.getElementById("start-olvm").href = "#/olvm/vms";
     wireAzureAuthHelpButton("start-azure-info");
     wireGcpAuthHelpButton("start-gcp-info");
     wireAwsAuthHelpButton("start-aws-info");
@@ -518,6 +525,42 @@
         try { localStorage.setItem("vcoci.awsLogin", JSON.stringify({ access_key_id, region })); } catch (_) { /* ignore */ }
         setUser(me);
         if (["#/aws/login", "#/login", "#/start", "#/iso"].includes(location.hash)) location.hash = "#/aws/vms";
+        else route();
+      } catch (e) { err.textContent = e.message; }
+      finally { btn.disabled = false; }
+    });
+  }
+
+  async function showOlvmLogin() {
+    stopPolling();
+    setUser(null);
+    app.innerHTML = "";
+    app.append(tpl("tpl-olvm-login"));
+    app.querySelector(".login").prepend(el("p", {}, el("a", { href: "#/start", class: "muted" }, "\u2190 back to start")));
+    const form = document.getElementById("olvm-login-form");
+    const err = document.getElementById("olvm-login-error");
+    const btn = document.getElementById("olvm-login-btn");
+    let last = {};
+    try { last = JSON.parse(localStorage.getItem("vcoci.olvmLogin") || "{}") || {}; } catch (_) { /* ignore */ }
+    const recent = Array.isArray(last.recent) ? last.recent : [];
+    const datalist = document.getElementById("olvm-recent");
+    for (const h of recent) datalist.append(el("option", { value: h }));
+    form.elements.engine.value = recent[0] || last.engine || "";
+    form.elements.username.value = last.username || "";
+    form.elements.verify_ssl.checked = !!last.verify_ssl;
+    (form.elements.engine.value ? form.elements.password : form.elements.engine).focus();
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      err.textContent = ""; btn.disabled = true;
+      const engine_url = form.elements.engine.value.trim();
+      const username = form.elements.username.value.trim();
+      const verify_ssl = form.elements.verify_ssl.checked;
+      try {
+        const me = await api("POST", "/auth/olvm/login", { engine_url, username, password: form.elements.password.value, verify_ssl });
+        const remembered = [engine_url, ...recent.filter((h) => h !== engine_url)].slice(0, 8);
+        try { localStorage.setItem("vcoci.olvmLogin", JSON.stringify({ engine: engine_url, username, verify_ssl, recent: remembered })); } catch (_) { /* private mode */ }
+        setUser(me);
+        if (["#/olvm/login", "#/login", "#/start", "#/iso"].includes(location.hash)) location.hash = "#/olvm/vms";
         else route();
       } catch (e) { err.textContent = e.message; }
       finally { btn.disabled = false; }
@@ -656,7 +699,7 @@
     transfer.innerHTML = "";
     if (job.phase === "EXPORTING" && tr.started_at) {
       transfer.hidden = false;
-      transfer.textContent = `${isOvaExport(job) ? "Export disks to Object Storage" : isOva(job) ? "Copy data disks from Object Storage" : isAzure(job) ? "Disk export from Azure" : "Export OVF template"}: ${tr.percent || 0}% - ${fmtBytes(tr.bytes_received)} received` +
+      transfer.textContent = `${isOvaExport(job) ? "Export disks to Object Storage" : isOva(job) ? "Copy data disks from Object Storage" : isAzure(job) ? "Disk export from Azure" : isOlvm(job) ? "Disk download from OLVM" : "Export OVF template"}: ${tr.percent || 0}% - ${fmtBytes(tr.bytes_received)} received` +
         (tr.throughput_bps ? ` at ${fmtRate(tr.throughput_bps)} (last minute)` : "") +
         ` - running ${fmtDuration((Date.now() - new Date(tr.started_at)) / 1000)}`;
     } else if (!TERMINAL.includes(job.phase) && job.step_percent !== null && job.step_percent !== undefined) {
@@ -691,6 +734,7 @@
     const azure = isAzure(job);
     const gcpJob = isGcp(job);
     const awsJob = isAws(job);
+    const olvmJob = isOlvm(job);
     const az = job.azure || {};
     const gc = job.gcp || {};
     const aw = job.aws || {};
@@ -719,6 +763,9 @@
     ] : gcpJob ? [
       ["Source VM", el("span", { title: job.vm.moid }, `${job.vm.name} in GCP (${gc.zone || "-"}) - ${gc.machine_type || "size unknown"}, ${job.vm.num_cpu} vCPU, ${fmtBytes(job.vm.memory_mb * 1024 * 1024)} RAM, ${job.vm.disks.length} disk(s)`)],
       ["Project / export bucket", `${gc.project_id || "-"} / ${gc.export_bucket || "-"}`],
+      ["Guest OS", `${job.vm.guest_full_name || job.vm.guest_id}${job.target.operating_system_version ? ` - release ${job.target.operating_system_version} (selected)` : ""}`],
+    ] : olvmJob ? [
+      ["Source VM", `${job.vm.name} on ${((job.olvm || {}).engine_host) || "OLVM"}${job.olvm && job.olvm.cluster ? ` (${job.olvm.cluster})` : ""} - ${job.vm.num_cpu} vCPU, ${fmtBytes(job.vm.memory_mb * 1024 * 1024)} RAM, ${job.vm.disks.length} disk(s)`],
       ["Guest OS", `${job.vm.guest_full_name || job.vm.guest_id}${job.target.operating_system_version ? ` - release ${job.target.operating_system_version} (selected)` : ""}`],
     ] : awsJob ? [
       ["Source VM", el("span", { title: job.vm.moid }, `${job.vm.name} in EC2 (${aw.region || "-"}) - ${aw.instance_type || "size unknown"}, ${job.vm.num_cpu} vCPU, ${fmtBytes(job.vm.memory_mb * 1024 * 1024)} RAM, ${job.vm.disks.length} disk(s)`)],
@@ -805,6 +852,16 @@
       ...(job.network_fixup ? [["Network fix-up", fixupEl(job.network_fixup, "See diagnostics.")]] : []),
       ...(job.aws_fixup ? [["AWS cleanup", fixupEl(job.aws_fixup, "Enable AWS cleanup on the export page if first boot waits on EC2 metadata.")]] : []),
       ["Disk download", `EBS snapshot blocks${job.target.volume_vpus_per_gb ? `, ${job.target.volume_vpus_per_gb} VPU/GB volumes` : ""}`],
+      ["Started by", `${job.created_by || "-"} at ${new Date(job.created_at).toLocaleString()}`],
+    ] : olvmJob ? [
+      ["Step", job.step || "-"],
+      ...(job.power_off_source || job.power_off_result ? [["Source power-off", { already_off: "was already powered off when the export started",
+        guest_shutdown: "shut down in OLVM before the export (it stays powered off)",
+        powered_off: "stopped hard in OLVM before the export (the guest did not shut down in time)" }[job.power_off_result]
+        || "the VM was powered on when the job was created; it is shut down right before the export"]] : []),
+      ...(job.guest_fixup ? [["Initramfs fix-up", fixupEl(job.guest_fixup, "See diagnostics.")]] : []),
+      ...(job.network_fixup ? [["Network fix-up", fixupEl(job.network_fixup, "See diagnostics.")]] : []),
+      ["Disk download", `OLVM image transfer (allocated extents only)${job.target.volume_vpus_per_gb ? `, ${job.target.volume_vpus_per_gb} VPU/GB volumes` : ""}`],
       ["Started by", `${job.created_by || "-"} at ${new Date(job.created_at).toLocaleString()}`],
     ] : [
       ["Step", job.step || "-"],
@@ -1002,9 +1059,16 @@
   }
 
   // ------------------------------------------------------------------ VM list
-  async function vmsView() {
+  async function vmsView(opts) {
+    const olvm = !!(opts && opts.olvm);
     app.innerHTML = "";
     app.append(tpl("tpl-vms"));
+    if (olvm) {
+      const clusterHead = app.querySelector("table.vms thead th:nth-child(2)");
+      if (clusterHead) clusterHead.textContent = "Cluster";
+      const filterBox = document.getElementById("vm-filter");
+      if (filterBox) filterBox.placeholder = "Filter by name, cluster or guest OS";
+    }
     const rows = document.getElementById("vm-rows");
     const filter = document.getElementById("vm-filter");
     const offOnly = document.getElementById("vm-off-only");
@@ -1050,7 +1114,9 @@
         const active = job && !TERMINAL.includes(job.phase);
         const exportable = (off || on) && !vm.encrypted;
         const why = vm.encrypted ? "The VM is encrypted (VM encryption or a virtual TPM): vSphere does not allow exporting it. Decrypt it in vCenter first"
-          : off ? "" : on ? "The VM is powered on: it will be shut down just before the disk export" : "Resume and shut down, or power off the VM first";
+          : off ? "" : on ? (olvm ? "The VM is powered on: it will be shut down in OLVM just before the disk export"
+            : "The VM is powered on: it will be shut down just before the disk export")
+            : "Resume and shut down, or power off the VM first";
         rows.append(el("tr", {},
           el("td", { class: "name" }, vm.name, vm.encrypted ? " " : null, vm.encrypted ? encryptedBadge(vm) : null),
           el("td", { class: "muted" }, vm.folder || "-"),
@@ -1061,7 +1127,7 @@
           el("td", {}, job ? el("a", { href: `#/jobs/${job.id}`, class: "phase " + job.phase }, job.phase) : el("span", { class: "muted" }, "-")),
           el("td", {}, active
             ? el("a", { href: `#/jobs/${job.id}`, class: "button secondary small" }, "View job")
-            : el("a", { href: `#/export/${vm.moid}`, class: "button primary small" + (exportable ? "" : " disabled"), title: why }, "Migrate"))));
+            : el("a", { href: olvm ? `#/olvm/export/${encodeURIComponent(vm.moid)}` : `#/export/${vm.moid}`, class: "button primary small" + (exportable ? "" : " disabled"), title: why }, "Migrate"))));
       }
       if (!visible.length) rows.append(el("tr", {}, el("td", { colspan: 8, class: "muted" }, vms.length ? "No virtual machines match the filters." : "No virtual machines found in this inventory.")));
       count.textContent = filtered.length === vms.length ? `${vms.length} virtual machines` : `${filtered.length} of ${vms.length} virtual machines`;
@@ -1076,7 +1142,7 @@
     const load = async (refresh) => {
       err.textContent = ""; count.textContent = "Loading inventory...";
       try {
-        const [list, jobs] = await Promise.all([api("GET", "/vms" + (refresh ? "?refresh=true" : "")), api("GET", "/jobs")]);
+        const [list, jobs] = await Promise.all([api("GET", (olvm ? "/olvm/vms" : "/vms") + (refresh ? "?refresh=true" : "")), api("GET", "/jobs")]);
         vms = list;
         state.jobsByVm = {};
         for (const j of jobs) if (j.vm && !state.jobsByVm[j.vm.moid]) state.jobsByVm[j.vm.moid] = j; // jobs are newest first
@@ -1265,6 +1331,7 @@
     const azure = !!(src && src.azure);
     const gcp = !!(src && src.gcp);
     const aws = !!(src && src.aws);
+    const olvm = !!(src && src.olvm);
     app.innerHTML = "";
     app.append(tpl("tpl-export"));
     const form = document.getElementById("target-form");
@@ -1282,10 +1349,16 @@
     const inspectUrl = () => gcp ? `/gcp/vm?id=${encodeURIComponent(moid)}&capture_mode=${captureMode()}`
       : aws ? `/aws/vm?id=${encodeURIComponent(moid)}&capture_mode=${captureMode()}`
         : azure ? `/azure/vm?id=${encodeURIComponent(moid)}&capture_mode=${captureMode()}`
+          : olvm ? `/olvm/vm?id=${encodeURIComponent(moid)}`
           : `/vms/${encodeURIComponent(moid)}`;
     if (gcp) document.querySelector("#vm-card .toolbar a").href = "#/gcp/vms";
     else if (aws) document.querySelector("#vm-card .toolbar a").href = "#/aws/vms";
     else if (azure) document.querySelector("#vm-card .toolbar a").href = "#/azure/vms";
+    else if (olvm) document.querySelector("#vm-card .toolbar a").href = "#/olvm/vms";
+    if (olvm) {
+      document.getElementById("power-off-note").innerHTML =
+        "<strong>This VM is powered on.</strong> Starting the migration <strong>shuts it down</strong> in OLVM right before the disk export (after the OCI instance and volumes are prepared): a guest shutdown, then a hard stop if it does not power off in time. The VM stays powered off. You will be asked to confirm.";
+    }
 
     let inspection, options;
     try {
@@ -1298,7 +1371,9 @@
       ["Power state", vm.power_state],
       azure ? ["Resource group", azureResourceGroup(vm.moid) || "-"]
         : gcp ? ["Zone", gcpZone(vm.moid) || "-"]
-          : aws ? ["AZ / instance", vm.host_name || vm.moid] : ["ESXi host", vm.host_name || "-"],
+          : aws ? ["AZ / instance", vm.host_name || vm.moid]
+            : olvm ? ["Cluster", vm.host_name || "-"]
+            : ["ESXi host", vm.host_name || "-"],
       ["CPU / memory", `${vm.num_cpu} vCPU / ${fmtBytes(vm.memory_mb * 1024 * 1024)}`],
       ["Firmware", vm.firmware.toUpperCase() + (vm.secure_boot ? " (secure boot)" : "") + (vm.has_vtpm ? " + vTPM" : "")],
       ...(vm.encrypted || vm.encrypted_disks.length ? [["Encryption", el("span", {}, azure ? azureEncryptedBadge() : encryptedBadge(vm),
@@ -1416,7 +1491,7 @@
       osSel.required = !osInfo.version_detected;
       osLabel.classList.toggle("attention", !osInfo.version_detected);
       osSel.addEventListener("change", () => osLabel.classList.toggle("attention", !osSel.value));
-      const from = gcp ? "Google Cloud" : aws ? "Amazon EC2" : azure ? "Azure" : "vCenter";
+      const from = gcp ? "Google Cloud" : aws ? "Amazon EC2" : azure ? "Azure" : olvm ? "OLVM" : "vCenter";
       document.getElementById("os-version-hint").textContent = osInfo.version_detected
         ? `Detected from ${from} (${vm.guest_full_name || vm.guest_id}); change it if the guest runs another release.`
         : `${from} only reports "${vm.guest_full_name || vm.guest_id}" without the release. Select the one installed in the guest; OCI records it on the image and uses it for OS-specific defaults.`;
@@ -1449,7 +1524,7 @@
     document.getElementById("gcp-transfer-note").hidden = !gcp;
     document.getElementById("azure-transfer-note").hidden = !azure;
     document.getElementById("aws-transfer-note").hidden = !aws;
-    document.getElementById("nfc-options").hidden = azure || gcp || aws;
+    document.getElementById("nfc-options").hidden = azure || gcp || aws || olvm;
     if (isWin && isWindowsClient(vm)) {
       // OCI has no licenses for client editions; the API refuses OCI_PROVIDED for them
       const ociLic = form.querySelector('input[name="windows_license_type"][value="OCI_PROVIDED"]');
@@ -1460,7 +1535,7 @@
     document.getElementById("esxi-host-hint").textContent = vm.host_name ? `(${vm.host_name})` : "";
     sel("nfc_direct_to_esxi").disabled = !vm.host_name;
     // the NFC options are vCenter-only; Azure downloads page ranges instead
-    document.getElementById("nfc-options").hidden = azure || gcp || aws;
+    document.getElementById("nfc-options").hidden = azure || gcp || aws || olvm;
     document.getElementById("azure-transfer-note").hidden = !azure;
     renderSizing();
 
@@ -1491,8 +1566,8 @@
         compatibility_mode: fd.get("compatibility_mode") === "on",
         boot_volume_type_override: fd.get("boot_volume_type_override") || null,
         network_type_override: fd.get("network_type_override") || null,
-        nfc_direct_to_esxi: !azure && !gcp && !aws && fd.get("nfc_direct_to_esxi") === "on",
-        pipelined_decode: !azure && !gcp && !aws && fd.get("pipelined_decode") === "on",
+        nfc_direct_to_esxi: !azure && !gcp && !aws && !olvm && fd.get("nfc_direct_to_esxi") === "on",
+        pipelined_decode: !azure && !gcp && !aws && !olvm && fd.get("pipelined_decode") === "on",
         rebuild_initramfs: !isWin && fd.get("rebuild_initramfs") === "on",
         fix_network: !isWin && fd.get("fix_network") === "on",
         azure_cleanup: azure && !isWin && fd.get("azure_cleanup") === "on",
@@ -1513,6 +1588,13 @@
             "(after the OCI instance and volumes are prepared).\n\n" +
             "The instance stays stopped in AWS afterwards.\n\n" +
             `Stop "${vm.name}" and migrate it?`)
+          : olvm
+          ? confirm(`WARNING: "${vm.name}" is powered on in OLVM.\n\n` +
+            `Starting this migration will POWER OFF the VM "${vm.name}" right before the disk export ` +
+            "(after the OCI instance and volumes are prepared). The engine asks the guest to shut down; " +
+            "if it does not stop in time the VM is stopped hard.\n\n" +
+            "The VM stays powered off in OLVM afterwards.\n\n" +
+            `Power off "${vm.name}" and migrate it?`)
           : azure
           ? confirm(`WARNING: "${vm.name}" is running in Azure.\n\n` +
             `Starting this migration will DEALLOCATE (stop) the VM "${vm.name}" right before the disk export ` +
@@ -1536,6 +1618,8 @@
           ? await api("POST", "/jobs/aws", { vm_id: moid, target, capture_mode: captureMode(), power_off_source: inspection.needs_power_off })
           : azure
           ? await api("POST", "/jobs/azure", { vm_id: moid, target, capture_mode: captureMode(), power_off_source: inspection.needs_power_off })
+          : olvm
+          ? await api("POST", "/jobs/olvm", { vm_id: moid, target, power_off_source: inspection.needs_power_off })
           : await api("POST", "/jobs", { vm_moid: moid, target, power_off_source: inspection.needs_power_off });
         location.hash = `#/jobs/${job.id}`;  // follow the migration on its own page
       } catch (e) { formError.textContent = e.message; submit.disabled = false; }
@@ -2208,7 +2292,7 @@
       if (p === "ACTIVE" ? TERMINAL.includes(j.phase) : p && j.phase !== p) return false;
       const q = search.value.trim().toLowerCase();
       const target = j.instance_display_name || j.target.display_name || "";
-      const extra = j.iso ? j.iso.bucket : j.ova ? j.ova.bucket : j.ova_export ? `${j.ova_export.bucket} ${j.ova_export.prefix}` : j.azure ? `${j.azure.resource_group} ${j.azure.subscription_name}` : "";
+      const extra = j.iso ? j.iso.bucket : j.ova ? j.ova.bucket : j.ova_export ? `${j.ova_export.bucket} ${j.ova_export.prefix}` : j.azure ? `${j.azure.resource_group} ${j.azure.subscription_name}` : j.olvm ? `${j.olvm.engine_host} ${j.olvm.cluster}` : "";
       return !q || `${sourceTypeLabel(j)} ${sourceName(j)} ${extra} ${target}`.toLowerCase().includes(q);
     };
 
@@ -2224,7 +2308,8 @@
       const targetVm = j.ova_export
         ? (j.ova_export.ovf_object || `${j.ova_export.bucket}/${j.ova_export.prefix || ""}`)
         : (j.instance_display_name || j.target.display_name || sourceName(j));
-      const where = j.azure ? el("span", { class: "muted" }, ` (${j.azure.resource_group})`) : null;
+      const where = j.azure ? el("span", { class: "muted" }, ` (${j.azure.resource_group})`)
+        : j.olvm && j.olvm.cluster ? el("span", { class: "muted" }, ` (${j.olvm.cluster})`) : null;
       const type = sourceTypeLabel(j);
       return el("td", { class: "name", title: j.azure ? `${type}\n${sourceVm}\n${targetVm}\n${j.azure.subscription_name || j.azure.subscription_id}/${j.azure.resource_group}` : `${type}\n${sourceVm}\n${targetVm}` },
         el("div", { class: "job-source" },
@@ -2939,6 +3024,7 @@
         if (hash === "#/azure/login") return showAzureLogin();
         if (hash === "#/gcp/login") return showGcpLogin();
         if (hash === "#/aws/login") return showAwsLogin();
+        if (hash === "#/olvm/login") return showOlvmLogin();
         try { setUser(await api("POST", "/auth/anonymous")); }
         catch (e2) { showError(e2.message); return; }
       }
@@ -2954,6 +3040,7 @@
     const navHash = hash.startsWith("#/azure/export/") ? "#/azure/vms"
       : hash.startsWith("#/gcp/export/") ? "#/gcp/vms"
         : hash.startsWith("#/aws/export/") ? "#/aws/vms"
+          : hash.startsWith("#/olvm/export/") ? "#/olvm/vms"
           : hash.startsWith("#/export/") ? "#/vms" : hash;
     const homeLink = document.getElementById("home-link");
     if (homeLink) homeLink.classList.toggle("active", hash === "#/start");
@@ -2965,12 +3052,14 @@
     const azure = hasAzure(state.me);
     const gcp = hasGcp(state.me);
     const aws = hasAws(state.me);
+    const olvm = hasOlvm(state.me);
     if (hash === "#/start") return startView();
     if (hash === "#/unlock" || hash === "#/first-use") { location.hash = "#/start"; return; }
     if (hash === "#/login") { if (!hasVcenter(state.me)) return showLogin(); location.hash = "#/vms"; return; }
     if (hash === "#/azure/login") { if (!azure) return showAzureLogin(); location.hash = "#/azure/vms"; return; }
     if (hash === "#/gcp/login") { if (!gcp) return showGcpLogin(); location.hash = "#/gcp/vms"; return; }
     if (hash === "#/aws/login") { if (!aws) return showAwsLogin(); location.hash = "#/aws/vms"; return; }
+    if (hash === "#/olvm/login") { if (!olvm) return showOlvmLogin(); location.hash = "#/olvm/vms"; return; }
     if (hash === "#/iso") return isoView();
     if (hash === "#/ova") return ovaView();
     if (hash === "#/ova-export") return ovaExportView();
@@ -2980,7 +3069,7 @@
     if ((m = /^#\/jobs\/([^/]+)\/console$/.exec(hash))) return consoleView({ kind: "job", id: decodeURIComponent(m[1]) });
     if ((m = /^#\/jobs\/(.+)$/.exec(hash))) return jobDetailView(decodeURIComponent(m[1]));
     if (hash === "#/jobs") return jobsView();
-    if (hash === "#/vms") { if (anonymous || azure || gcp || aws) { location.hash = "#/login"; return; } return vmsView(); }
+    if (hash === "#/vms") { if (anonymous || azure || gcp || aws || olvm) { location.hash = "#/login"; return; } return vmsView(); }
     if (hash === "#/setup") return setupView();
     // the Azure inventory and export form need an Azure login, the vSphere ones a vCenter login; the login
     // pages replace whatever session the browser has (a vCenter login cannot list Azure VMs and vice versa)
@@ -2999,7 +3088,12 @@
       if ((m = /^#\/aws\/export\/(.+)$/.exec(hash))) return exportView(decodeURIComponent(m[1]), { aws: true });
       return awsVmsView();
     }
-    if (anonymous || azure || gcp || aws) { location.hash = "#/login"; return; }
+    if (hash === "#/olvm/vms" || hash.startsWith("#/olvm/export/")) {
+      if (!olvm) { location.hash = "#/olvm/login"; return; }
+      if ((m = /^#\/olvm\/export\/(.+)$/.exec(hash))) return exportView(decodeURIComponent(m[1]), { olvm: true });
+      return vmsView({ olvm: true });
+    }
+    if (anonymous || azure || gcp || aws || olvm) { location.hash = "#/login"; return; }
     if ((m = /^#\/export\/(.+)$/.exec(hash))) return exportView(decodeURIComponent(m[1]));
     return vmsView();
   }

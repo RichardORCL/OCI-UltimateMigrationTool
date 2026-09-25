@@ -28,6 +28,7 @@ from helper_app.branding import (
     TAG_SOURCE_ESXI_HOST,
     TAG_SOURCE_GCP,
     TAG_SOURCE_MOID,
+    TAG_SOURCE_OLVM,
     TAG_SOURCE_VCENTER,
     TAG_SOURCE_VM,
     TAG_SOURCE_VM_DETAILS,
@@ -1063,6 +1064,8 @@ def source_tags(job: Job) -> dict[str, str]:
         prefix = f"GCP shape {job.gcp.machine_type}, "
     elif job.aws is not None and job.aws.instance_type:
         prefix = f"AWS shape {job.aws.instance_type}, "
+    elif job.olvm is not None and job.olvm.cluster:
+        prefix = f"OLVM cluster {job.olvm.cluster}, "
     details = (prefix + f"{vm.num_cpu} vCPU, {vm.memory_mb / 1024:g} GB RAM, {len(vm.disks)} disk(s) "
                f"{_gb(total):g} GB [{disks}], {len(vm.nics)} NIC(s), {vm.guest_full_name or vm.guest_id}, {firmware}")
     tags = {
@@ -1073,7 +1076,7 @@ def source_tags(job: Job) -> dict[str, str]:
     }
     if job.vcenter_host:
         tags[TAG_SOURCE_VCENTER] = job.vcenter_host[:TAG_VALUE_MAX]
-    if vm.host_name:
+    if vm.host_name and job.kind == "vmware":
         tags[TAG_SOURCE_ESXI_HOST] = vm.host_name[:TAG_VALUE_MAX]
     if job.azure is not None:
         tags[TAG_SOURCE_AZURE] = f"{job.azure.subscription_id}/{job.azure.resource_group}"[:TAG_VALUE_MAX]
@@ -1081,6 +1084,8 @@ def source_tags(job: Job) -> dict[str, str]:
         tags[TAG_SOURCE_GCP] = f"{job.gcp.project_id}/{job.gcp.zone}"[:TAG_VALUE_MAX]
     if job.aws is not None:
         tags[TAG_SOURCE_AWS] = f"{job.aws.account_id}/{job.aws.region}"[:TAG_VALUE_MAX]
+    if job.olvm is not None:
+        tags[TAG_SOURCE_OLVM] = f"{job.olvm.engine_host}/{job.olvm.cluster}".strip("/")[:TAG_VALUE_MAX]
     return tags
 
 

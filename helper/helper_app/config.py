@@ -66,6 +66,15 @@ class Settings(BaseSettings):
     aws_snapshot_timeout_s: int = 900
     aws_range_workers: int = 4
 
+    # OLVM source: after the VM is shut down, disks are downloaded through the engine image proxy
+    # (oVirt image transfer, raw extents). The tool VM must reach the engine HTTPS port and the
+    # image proxy (typically 54323).
+    olvm_shutdown_timeout_s: int = 300
+    olvm_transfer_timeout_s: int = 300  # wait until an image transfer reports phase=transferring
+    olvm_transfer_inactivity_s: int = 300  # engine-side lock timeout while a transfer is idle
+    olvm_range_workers: int = 4
+    olvm_range_chunk_bytes: int = 8 * 1024 * 1024
+
     # Logging (both adjustable from the Setup page; changes persist in runtime_settings_path)
     log_level: str = "INFO"
     oci_log_requests: bool = False  # enable redacted OCI SDK diagnostic logging at DEBUG (no raw wire dumps)

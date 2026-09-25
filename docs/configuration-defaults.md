@@ -37,6 +37,11 @@ See [install-helper.md](install-helper.md#configuration-reference) for usage and
 | `HELPER_AWS_STOP_TIMEOUT_S` | `900` |
 | `HELPER_AWS_SNAPSHOT_TIMEOUT_S` | `900` |
 | `HELPER_AWS_RANGE_WORKERS` | `4` |
+| `HELPER_OLVM_SHUTDOWN_TIMEOUT_S` | `300` |
+| `HELPER_OLVM_TRANSFER_TIMEOUT_S` | `300` |
+| `HELPER_OLVM_TRANSFER_INACTIVITY_S` | `300` |
+| `HELPER_OLVM_RANGE_WORKERS` | `4` |
+| `HELPER_OLVM_RANGE_CHUNK_BYTES` | `8388608` |
 | `HELPER_LOG_LEVEL` | `"INFO"` |
 | `HELPER_OCI_LOG_REQUESTS` | `false` |
 | `HELPER_RUNTIME_SETTINGS_PATH` | `"/var/lib/vc-oci-helper/runtime-settings.json"` |

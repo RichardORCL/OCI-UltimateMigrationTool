@@ -33,6 +33,7 @@ from helper_app.disk.gcs_range_copy import (
     copy_parallel_ranges,
     object_size,
 )
+from helper_app.disk.imageio_range_copy import ImageioAuthExpired, ImageioCopyError, allocated_ranges, copy_extents
 from helper_app.disk.pipeline import PipelinedDecoder
 from helper_app.disk.vhd_range_copy import VhdCopyError, blob_length, copy_ranges, list_page_ranges
 from helper_app.disk.vmdk_stream import DecodeStats, StreamOptimizedDecoder, VmdkFormatError
@@ -50,6 +51,10 @@ from helper_app.oci.iso_install import IsoInstaller
 from helper_app.oci.ova_export import OvaExporter
 from helper_app.oci.ova_import import OvaImporter
 from helper_app.oci.provision import Provisioner
+from helper_app.olvm.client import OlvmAuthError, OlvmError
+from helper_app.olvm.export import OlvmDiskExport
+from helper_app.olvm.inventory import power_state as olvm_power_state
+from helper_app.olvm.power import shut_down as olvm_shut_down
 from helper_app.runtime_settings import MAX_CONCURRENT_JOBS
 from helper_app.sessions import UserSession
 from helper_app.vsphere.export import ExportError, NfcExport, match_disk_urls
@@ -253,6 +258,8 @@ class MigrationRunner:
                 self._run_gcp(job)
             elif job.kind == "aws":
                 self._run_aws(job)
+            elif job.kind == "olvm":
+                self._run_olvm(job)
             else:
                 self._run(job)
         except JobCancelled:
@@ -907,6 +914,146 @@ class MigrationRunner:
                 disk.error = "cancelled"
                 raise
             except (ExportError, EbsCopyError, AwsError, OSError, httpx.HTTPError) as exc:
+                last_error = exc
+                disk.status = DiskStatus.FAILED
+                disk.throughput_bps = 0.0
+                job.transfer.throughput_bps = 0.0
+                disk.error = str(exc)
+                self._save(job, message=f"{label} attempt {attempt} failed: {exc}")
+                if attempt < self.s.disk_retry_attempts:
+                    time.sleep(min(30, 5 * attempt))
+            finally:
+                writer.close()
+        raise ExportError(f"{label} failed after {disk.attempts} attempts: {last_error}")
+
+    # ------------------------------------------------------------------ OLVM
+    def _run_olvm(self, job: Job) -> None:
+        session = self._sessions[job.id]
+        if session.olvm is None:
+            raise ExportError("the session that created the job has no OLVM login")
+        client = session.olvm.client
+        info = job.olvm
+        if info is None:
+            raise ExportError("job has no OLVM source information")
+
+        self._save(job, JobPhase.PROVISIONING, "Requesting target instance and volumes in OCI")
+        self.prov.prepare(job, check_cancel=lambda: self._check_cancel(job))
+        self._check_cancel(job)
+
+        self._save(job, JobPhase.EXPORTING, "Checking the source VM in OLVM")
+        vm_id = job.vm.moid
+        vm = client.get_vm(vm_id)
+        state = olvm_power_state(vm)
+        job.vm.power_state = state
+        if state != "poweredOff":
+            if not job.power_off_source:
+                raise ExportError(f"VM is {state}; it must be shut down during the export")
+            job.step = "power_off"
+            self._save(job, message=f"Shutting down {job.vm.name} in OLVM")
+            result = olvm_shut_down(client, vm_id, self.s.olvm_shutdown_timeout_s,
+                                    on_wait=lambda: self._check_cancel(job), sleep=time.sleep)
+            job.power_off_result = result
+            job.vm.power_state = "poweredOff"
+            self._save(job, message=f"{job.vm.name} powered off ({result.replace('_', ' ')})")
+        else:
+            job.power_off_result = "already_off"
+
+        job.step = "export_access"
+        self._save(job, message=f"Opening image transfers for {job.vm.name}")
+        export = OlvmDiskExport(
+            client, inactivity_timeout_s=self.s.olvm_transfer_inactivity_s,
+            ready_timeout_s=self.s.olvm_transfer_timeout_s,
+            check_cancel=lambda: self._check_cancel(job),
+        )
+        with export:
+            job.transfer.started_at = job.transfer.started_at or utcnow()
+            job.transfer.percent = 0
+            self.store.put(job)
+            try:
+                for disk in job.disks:
+                    if disk.status == DiskStatus.COPIED:
+                        continue
+                    self._check_cancel(job)
+                    self._copy_olvm_disk(job, disk, export, client)
+                job.transfer.percent = 100
+            finally:
+                job.transfer.finished_at = utcnow()
+                job.transfer.throughput_bps = 0.0
+        job.step = "export_released"
+        self._save(job, message="Image transfers closed")
+
+        self._check_cancel(job)
+        self._guest_fixup(job)
+
+        self._save(job, JobPhase.FINALIZING, "Attaching volumes to the target instance")
+        self.prov.finalize(job)
+        self._save(job, message=f"Migration complete: instance {job.instance_id}")
+
+    def _copy_olvm_disk(self, job: Job, disk: DiskState, export: OlvmDiskExport, client) -> None:
+        last_error: Optional[Exception] = None
+        label = disk.label or f"disk {disk.index}"
+        info = job.olvm
+        if info is None or disk.index >= len(info.disk_ids):
+            raise ExportError(f"{label} has no OLVM disk id")
+        disk_id = info.disk_ids[disk.index]
+        for attempt in range(1, self.s.disk_retry_attempts + 1):
+            self._check_cancel(job)
+            disk.attempts = attempt
+            disk.status = DiskStatus.COPYING
+            disk.bytes_received = disk.bytes_written = disk.grains_written = 0
+            disk.percent = 0
+            disk.error = None
+            job.step = "copying"
+            self._save(job, message=f"Opening an image transfer for {label} "
+                                    f"(attempt {attempt}/{self.s.disk_retry_attempts})")
+            try:
+                writer = BlockDeviceWriter(disk.device, expected_min_size=disk.capacity_bytes)
+            except (OSError, ValueError) as exc:
+                raise ExportError(f"cannot open {disk.device}: {exc}") from exc
+            meter = RateMeter()
+            written_before = sum(d.bytes_written for d in job.disks if d is not disk)
+            try:
+                writer.ensure_size(disk.capacity_bytes)
+                transfer = export.open(disk_id)
+                extents = client.image_extents(transfer.url, transfer.ticket)
+                ranges = allocated_ranges(extents, disk.capacity_bytes)
+                allocated = sum(length for _, length in ranges)
+                disk.stream_bytes = allocated or None
+                self._save(job, message=f"Copying {label} to {disk.device}: {allocated:,} of "
+                                        f"{disk.capacity_bytes:,} bytes allocated in {len(ranges)} range(s)")
+
+                def fetch(off: int, length: int, current=transfer) -> bytes:
+                    try:
+                        return client.read_image(current.url, current.ticket, off, length)
+                    except OlvmAuthError as exc:
+                        raise ImageioAuthExpired(str(exc)) from exc
+
+                def refresh(current=transfer) -> None:
+                    export.refresh(current)
+
+                stats = copy_extents(
+                    fetch, ranges, writer,
+                    chunk_bytes=self.s.olvm_range_chunk_bytes, workers=self.s.olvm_range_workers,
+                    retries=self.s.disk_retry_attempts,
+                    check_cancel=lambda: self._check_cancel(job),
+                    on_progress=self._cloud_progress_callback(job, disk, meter, written_before),
+                    refresh=refresh,
+                )
+                export.finish(transfer)
+                self._record_cloud_progress(job, disk, stats.bytes_received, stats.bytes_written,
+                                            stats.chunks_written, meter.rate(), written_before)
+                disk.percent = 100
+                disk.throughput_bps = 0.0
+                disk.status = DiskStatus.COPIED
+                self._save(job, message=f"{label} copied ({stats.bytes_received:,} bytes in "
+                                        f"{stats.chunks_written:,} range request(s)"
+                                        + (f", {stats.retries} retried" if stats.retries else "") + ")")
+                return
+            except JobCancelled:
+                disk.status = DiskStatus.FAILED
+                disk.error = "cancelled"
+                raise
+            except (ExportError, ImageioCopyError, OlvmError, OSError, httpx.HTTPError) as exc:
                 last_error = exc
                 disk.status = DiskStatus.FAILED
                 disk.throughput_bps = 0.0

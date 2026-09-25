@@ -11,12 +11,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
 
 from helper_app import diagnostics
-from helper_app.api import routes_aws_vms, routes_azure_vms, routes_gcp_vms
+from helper_app.api import routes_aws_vms, routes_azure_vms, routes_gcp_vms, routes_olvm_vms
 from helper_app.api.routes_vms import inspect
 from helper_app.auth import (
     require_aws_session,
     require_azure_session,
     require_gcp_session,
+    require_olvm_session,
     require_session,
     require_vcenter_session,
 )
@@ -29,6 +30,7 @@ from helper_app.models import (
     CreateGcpJobRequest,
     CreateIsoJobRequest,
     CreateJobRequest,
+    CreateOlvmJobRequest,
     CreateOvaExportJobRequest,
     CreateOvaJobRequest,
     DiskState,
@@ -37,6 +39,7 @@ from helper_app.models import (
     Job,
     JobPhase,
     OciTarget,
+    OlvmSourceInfo,
     OvaExportSpec,
     VmInspection,
     WindowsLicenseType,
@@ -146,6 +149,46 @@ async def create_job(body: CreateJobRequest, request: Request,
         id=uuid.uuid4().hex,
         vm=inspection.vm,
         vcenter_host=info.vcenter_host + (f":{info.vcenter_port}" if info.vcenter_port != 443 else ""),
+        target=body.target,
+        power_off_source=inspection.needs_power_off,
+        phase=JobPhase.QUEUED,
+        message="Queued" + (" (the VM is shut down right before the disk export)" if inspection.needs_power_off
+                            else ""),
+        disks=[DiskState(index=d.index, label=d.label, capacity_bytes=d.capacity_bytes, is_boot=(d.index == 0))
+               for d in inspection.vm.disks],
+        created_by=session.username,
+        created_at=now,
+        updated_at=now,
+    )
+    st.store.put(job)
+    st.runner.submit(job.id, session)
+    return job
+
+
+@router.post("/olvm", response_model=Job, status_code=status.HTTP_202_ACCEPTED)
+async def create_olvm_job(body: CreateOlvmJobRequest, request: Request,
+                          session: UserSession = Depends(require_olvm_session)):
+    """Migrate an OLVM VM: it is shut down, then its disks are streamed onto OCI volumes."""
+    st = request.app.state
+    details = await asyncio.to_thread(routes_olvm_vms.inspect_details, session, body.vm_id)
+    inspection = routes_olvm_vms.inspect(session, body.vm_id, details)
+    if not inspection.can_export:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "; ".join(inspection.problems))
+    if inspection.needs_power_off and not body.power_off_source:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"{inspection.vm.name} is powered on; confirm that it may be shut down for the "
+                            "migration (power_off_source), or power it off in OLVM first")
+    await _check_guest_os(st, inspection, body.target, "OLVM")
+    active = st.store.active_for_vm(inspection.vm.moid)
+    if active is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"job {active.id} for this VM is still {active.phase.value}")
+    now = utcnow()
+    olvm = session.olvm
+    job = Job(
+        id=uuid.uuid4().hex,
+        kind="olvm",
+        vm=inspection.vm,
+        olvm=OlvmSourceInfo(engine_host=olvm.engine_host, cluster=details.cluster, disk_ids=details.disk_ids),
         target=body.target,
         power_off_source=inspection.needs_power_off,
         phase=JobPhase.QUEUED,

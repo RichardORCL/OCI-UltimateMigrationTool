@@ -9,7 +9,8 @@ tables see [os-mapping.md](os-mapping.md); for known limitations and troubleshoo
 Contents
 
 - [The OCI side, shared by all migrations](#the-oci-side-shared-by-all-migrations)
-- Migration options: [VMware vCenter / ESXi](#vmware-vcenter--esxi), [Microsoft Azure](#microsoft-azure),
+- Migration options: [VMware vCenter / ESXi](#vmware-vcenter--esxi),
+  [Oracle Linux Virtualization Manager](#oracle-linux-virtualization-manager), [Microsoft Azure](#microsoft-azure),
   [Amazon EC2](#amazon-ec2), [Google Cloud Compute Engine](#google-cloud-compute-engine),
   [Import OVA/OVF from Object Storage](#import-ovaovf-from-object-storage)
 - Extra features: [Create OCI instance from ISO](#create-oci-instance-from-iso),
@@ -20,8 +21,9 @@ Contents
 
 Everything runs on a single VM in OCI, the **OCI Migration Tool VM**. Migrations run **without VDDK and
 without temporary storage on that VM**: source disks are streamed straight onto OCI block volumes that
-are attached to the tool VM while the copy runs. Every source (VMware, Azure, AWS, Google Cloud, OVA)
-ends in the same pipeline; only the way the source disks are read differs.
+are attached to the tool VM while the copy runs. Every source (VMware, OLVM, Azure, AWS, Google Cloud, OVA)
+ends in the same pipeline; only the way the source disks are read differs. OLVM is read the same way as
+VMware: the VM is shut down, then its disks are streamed straight onto the OCI volumes.
 
 1. **Seed image.** The tool registers a tiny *seed* custom image matching the VM's firmware (BIOS/UEFI),
    Secure Boot and operating system (reused for later VMs with the same combination) and launches the
@@ -89,8 +91,31 @@ The account needs `VirtualMachine.Provisioning.ExportOVF` / *Allow disk access* 
 `VirtualMachine.Interact.PowerOff` when the tool is to shut the VM down). The tool VM must reach the
 endpoint on 443 (or the port given at login) over your VPN/FastConnect. The VM must be powered off during
 the copy (the tool shuts it down otherwise). Encrypted VMs (including Windows 11 with a vTPM) cannot be
-exported by vSphere; decrypt them first. vSphere Hosted (Workstation/Fusion) and Hyper-V/KVM sources are
-**not** supported - see [limitations.md](limitations.md).
+exported by vSphere; decrypt them first. vSphere Hosted (Workstation/Fusion), Hyper-V and unmanaged KVM
+(a host that is not managed by OLVM) are **not** supported - see [limitations.md](limitations.md).
+
+## Oracle Linux Virtualization Manager
+
+You log in with an engine URL, user name and password (for example `admin@internal`). The password stays
+in memory for the browser session (`POST /api/auth/olvm/login`). The tool lists the engine's virtual
+machines (`GET /api/olvm/vms`) and maps each one to a `VmSpec` (`olvm/inventory.py`): SeaBIOS or OVMF /
+Secure Boot, CPU topology and memory, the boot disk first, and the guest OS from the oVirt `os.type`
+(`rhel_9x64`, `ol_8x64`, `windows_2022`, …) so `oci/mapping.py` recognises the same operating systems as
+for vSphere.
+
+After the OCI side is prepared the tool:
+
+- shuts the source VM down if it is still up (confirmed by the operator when starting the job: guest
+  shutdown through the engine, hard stop if it has not powered off after `HELPER_OLVM_SHUTDOWN_TIMEOUT_S`);
+- opens an oVirt image transfer (`direction=download`, `format=raw`) per disk and streams the allocated
+  extents from the engine image proxy (`proxy_url`, typically port 54323) onto the attached OCI volumes.
+  Zero extents are skipped. The transfer is finalized when the disk is copied and cancelled if the job
+  fails or is cancelled, so the disk lock is released. No OVA is written.
+
+The tool VM must reach the engine on HTTPS (API and the SSO token endpoint) and the image proxy. Direct
+LUN disks, the hosted-engine VM, disks that are not `ok`, and VMs that are migrating or otherwise
+transient are refused before anything is created in OCI. The VM stays powered off afterwards. There is
+no snapshot-while-running mode.
 
 ## Microsoft Azure
 
@@ -384,6 +409,8 @@ the *Maximum compatibility* preset (IDE + E1000) - see [limitations.md](limitati
 | Flow | Port | Notes |
 | --- | --- | --- |
 | Browser -> migration tool | TCP 8443 | web UI + API, TLS (self-signed by default), restricted by `allowed_source_cidrs` |
+| Migration tool -> OLVM engine | TCP 443 | OLVM source only: engine REST API and the SSO token endpoint |
+| Migration tool -> OLVM image proxy | TCP 54323 | OLVM source only: image-transfer download (the engine proxies the hosts). Used when the transfer returns a `proxy_url`; otherwise the host imageio port 54322 |
 | Migration tool -> vCenter | TCP 443 | SOAP API and the NFC disk download (vCenter proxies ESXi by default) |
 | Migration tool -> ESXi hosts | TCP 443 | Only with *Download the disks directly from the ESXi host* (per migration) or `HELPER_NFC_HOST_OVERRIDE`; bypasses the vCenter proxy, usually several times faster |
 | Migration tool -> `login.microsoftonline.com`, `management.azure.com` | TCP 443 | Azure source only: Entra ID token, Azure Resource Manager (VM inventory, deallocate, snapshots, export SAS). Needs a NAT gateway or other internet route |

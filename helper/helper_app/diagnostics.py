@@ -97,6 +97,17 @@ def _source_lines(job: Job, settings: Settings) -> list[str]:
             f"range_workers={settings.gcp_range_workers} chunk_bytes={settings.gcp_range_chunk_bytes}",
             _fixup_lines(job),
         ]
+    if job.vm is not None and job.olvm is not None:
+        o = job.olvm
+        return [
+            f"  source OLVM VM: {job.vm.name} ({job.vm.moid}) guest={job.vm.guest_id} firmware={job.vm.firmware} "
+            f"cpu={job.vm.num_cpu} mem_mb={job.vm.memory_mb} disks={len(job.vm.disks)} "
+            f"power_off_source={job.power_off_source} power_off_result={job.power_off_result or '-'}",
+            f"  olvm: engine={o.engine_host} cluster={o.cluster or '-'} "
+            f"disks={','.join(o.disk_ids) or '-'} "
+            f"range_workers={settings.olvm_range_workers} chunk_bytes={settings.olvm_range_chunk_bytes}",
+            _fixup_lines(job),
+        ]
     if job.vm is not None and job.aws is not None:
         a = job.aws
         return [
