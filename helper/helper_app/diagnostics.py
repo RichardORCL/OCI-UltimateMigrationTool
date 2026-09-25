@@ -105,7 +105,8 @@ def _source_lines(job: Job, settings: Settings) -> list[str]:
             f"power_off_source={job.power_off_source} power_off_result={job.power_off_result or '-'}",
             f"  olvm: engine={o.engine_host} cluster={o.cluster or '-'} "
             f"disks={','.join(o.disk_ids) or '-'} "
-            f"range_workers={settings.olvm_range_workers} chunk_bytes={settings.olvm_range_chunk_bytes}",
+            f"range_workers={settings.olvm_range_workers} chunk_bytes={settings.olvm_range_chunk_bytes} "
+            f"direct_from_host={job.target.olvm_direct_from_host} download_host={job.nfc_host or '-'}",
             _fixup_lines(job),
         ]
     if job.vm is not None and job.aws is not None:

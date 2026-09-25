@@ -33,9 +33,13 @@ class ImageTransfer:
     ticket: str
 
 
-def transfer_download_url(transfer: dict) -> str:
-    """Prefer the engine image proxy so the tool VM only has to reach the manager."""
-    return str(transfer.get("proxy_url") or transfer.get("transfer_url") or "").rstrip("/")
+def transfer_download_url(transfer: dict, *, direct_from_host: bool = False) -> str:
+    """Manager proxy by default. ``direct_from_host`` reads the KVM host's imageio URL instead."""
+    proxy = str(transfer.get("proxy_url") or "").rstrip("/")
+    host = str(transfer.get("transfer_url") or "").rstrip("/")
+    if direct_from_host:
+        return host or proxy
+    return proxy or host
 
 
 def transfer_matches_disk(transfer: dict, disk_id: str) -> bool:
@@ -48,11 +52,13 @@ class OlvmDiskExport:
     """Opens image transfers for the job's disks and closes whatever is still open on exit."""
 
     def __init__(self, client: OlvmClient, *, inactivity_timeout_s: int, ready_timeout_s: float,
+                 direct_from_host: bool = False,
                  sleep: Callable[[float], None] = time.sleep,
                  check_cancel: Optional[Callable[[], None]] = None):
         self.client = client
         self.inactivity_timeout_s = inactivity_timeout_s
         self.ready_timeout_s = ready_timeout_s
+        self.direct_from_host = direct_from_host
         self.sleep = sleep
         self.check_cancel = check_cancel
         self.open_ids: list[str] = []
@@ -79,9 +85,12 @@ class OlvmDiskExport:
         transfer_id = str(created["id"])
         self.open_ids.append(transfer_id)
         ready = self._wait_until_transferring(transfer_id)
-        url = transfer_download_url(ready)
+        url = transfer_download_url(ready, direct_from_host=self.direct_from_host)
+        if self.direct_from_host and not str(ready.get("transfer_url") or "").strip():
+            log.warning("direct KVM download requested but transfer %s has no host URL; using the manager proxy",
+                        transfer_id)
         if not url:
-            raise OlvmError(f"image transfer {transfer_id} has no proxy URL")
+            raise OlvmError(f"image transfer {transfer_id} has no download URL")
         # Current OLVM leaves signed_ticket empty. The id inside the proxy URL is the credential.
         ticket = str(ready.get("signed_ticket") or "")
         return ImageTransfer(id=transfer_id, url=url, ticket=ticket)
@@ -95,7 +104,7 @@ class OlvmDiskExport:
         ticket = str(current.get("signed_ticket") or "")
         if ticket:
             transfer.ticket = ticket
-        url = transfer_download_url(current)
+        url = transfer_download_url(current, direct_from_host=self.direct_from_host)
         if url:
             transfer.url = url
         return transfer

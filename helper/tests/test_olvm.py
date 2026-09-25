@@ -9,7 +9,7 @@ from helper_app.disk.imageio_range_copy import allocated_ranges, copy_extents
 from helper_app.models import Firmware
 from helper_app.oci.mapping import map_guest_os, resolve_target_os
 from helper_app.olvm.client import OlvmAuthError, OlvmClient
-from helper_app.olvm.export import OlvmDiskExport
+from helper_app.olvm.export import OlvmDiskExport, transfer_download_url
 from helper_app.olvm.inventory import (
     OlvmVmDetails,
     firmware_of,
@@ -140,6 +140,27 @@ def test_extent_copy_skips_zeros():
     stats = copy_extents(fetch, ranges, writer, chunk_bytes=4096, workers=2)
     assert bytes(writer.buf) == raw
     assert stats.bytes_written == sum(length for _, length in ranges)
+
+
+def test_direct_kvm_download_uses_the_host_url():
+    transfer = {
+        "proxy_url": "https://olvm.test:54323/images/abc",
+        "transfer_url": "https://kvm01.test:54322/images/abc",
+    }
+    assert transfer_download_url(transfer) == "https://olvm.test:54323/images/abc"
+    assert transfer_download_url(transfer, direct_from_host=True) == "https://kvm01.test:54322/images/abc"
+    assert transfer_download_url({"proxy_url": "https://olvm.test:54323/images/abc"}, direct_from_host=True) == (
+        "https://olvm.test:54323/images/abc"
+    )
+
+    fleet = _fleet()
+    client = fleet.client_factory(ENGINE, USER, PASSWORD, False)
+    export = OlvmDiskExport(client, inactivity_timeout_s=30, ready_timeout_s=5, direct_from_host=True,
+                            sleep=lambda _s: None)
+    with export:
+        opened = export.open("disk-web-os")
+        assert opened.url.startswith("https://host.internal:54322/images/")
+        export.finish(opened)
 
 
 def test_export_exit_cancels_open_transfer():

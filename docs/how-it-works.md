@@ -111,16 +111,20 @@ After the OCI side is prepared the tool:
 - shuts the source VM down if it is still up (confirmed by the operator when starting the job: guest
   shutdown through the engine, hard stop if it has not powered off after `HELPER_OLVM_SHUTDOWN_TIMEOUT_S`);
 - opens an oVirt image transfer (`direction=download`, `format=raw`) per disk and streams the allocated
-  extents from the engine image proxy (`proxy_url`, typically port 54323) onto the attached OCI volumes.
-  Zero extents are skipped. Current OLVM does not return a signed ticket; the proxy URL is the credential.
+  extents onto the attached OCI volumes. By default the bytes come from the engine image proxy
+  (`proxy_url`, typically port 54323). *Download the disks directly from the KVM host* (export page,
+  *Advanced: disk transfer*) uses the host imageio address (`transfer_url`, TCP 54322) instead, the same
+  idea as the ESXi direct download. Zero extents are skipped. Current OLVM does not return a signed ticket;
+  the image URL is the credential.
   The transfer is finalized (`POST .../finalize`) when the disk is copied and cancelled
   (`POST .../cancel`) if the job fails or is cancelled, which is what releases the disk lock. A transfer
   already holding the disk is cancelled first. No OVA is written.
 
-The tool VM must reach the engine on HTTPS (API and the SSO token endpoint) and the image proxy. Direct
-LUN disks, the hosted-engine VM, disks that are not `ok`, and VMs that are migrating or otherwise
-transient are refused before anything is created in OCI. The VM stays powered off afterwards. There is
-no snapshot-while-running mode.
+The tool VM must reach the engine on HTTPS (API and the SSO token endpoint). The default download also
+needs the image proxy; a direct KVM download needs TCP 54322 to the host OLVM selects. LUN disks, the
+hosted-engine VM, disks that are not `ok`, and VMs that are migrating or otherwise transient are refused
+before anything is created in OCI. The VM stays powered off afterwards. There is no snapshot-while-running
+mode.
 
 ## Microsoft Azure
 
@@ -415,7 +419,8 @@ the *Maximum compatibility* preset (IDE + E1000) - see [limitations.md](limitati
 | --- | --- | --- |
 | Browser -> migration tool | TCP 8443 | web UI + API, TLS (self-signed by default), restricted by `allowed_source_cidrs` |
 | Migration tool -> OLVM engine | TCP 443 | OLVM source only: engine REST API and the SSO token endpoint |
-| Migration tool -> OLVM image proxy | TCP 54323 | OLVM source only: image-transfer download (the engine proxies the hosts). Used when the transfer returns a `proxy_url`; otherwise the host imageio port 54322 |
+| Migration tool -> OLVM image proxy | TCP 54323 | OLVM source only: image-transfer download through the manager. Used unless *Download the disks directly from the KVM host* is selected |
+| Migration tool -> OLVM KVM hosts | TCP 54322 | Only with *Download the disks directly from the KVM host* (per migration). The engine chooses the host that serves the disk |
 | Migration tool -> vCenter | TCP 443 | SOAP API and the NFC disk download (vCenter proxies ESXi by default) |
 | Migration tool -> ESXi hosts | TCP 443 | Only with *Download the disks directly from the ESXi host* (per migration) or `HELPER_NFC_HOST_OVERRIDE`; bypasses the vCenter proxy, usually several times faster |
 | Migration tool -> `login.microsoftonline.com`, `management.azure.com` | TCP 443 | Azure source only: Entra ID token, Azure Resource Manager (VM inventory, deallocate, snapshots, export SAS). Needs a NAT gateway or other internet route |

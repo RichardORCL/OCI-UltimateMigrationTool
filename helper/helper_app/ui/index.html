@@ -1007,6 +1007,10 @@ find "/lib/modules/$(uname -r)" -name 'virtio_scsi.ko*' -o -name 'sd_mod.ko*'</t
               <label class="check"><input type="checkbox" name="pipelined_decode"> Decode and write on a separate thread (keep downloading while grains are inflated and written)</label>
               <small>Overlaps the network read with decompression and the volume write instead of doing them one after another. Buffers a few chunks in memory (<code>HELPER_NFC_PIPELINE_DEPTH</code>).</small>
             </div>
+            <div id="olvm-transfer-options" hidden>
+              <label class="check"><input type="checkbox" name="olvm_direct_from_host"> Download the disks directly from the KVM host instead of through the OLVM manager</label>
+              <small>Usually faster than the manager proxy, but the migration tool VM must reach that host's image service on TCP 54322. OLVM chooses the host when the transfer starts.</small>
+            </div>
             <small id="azure-transfer-note" hidden>Azure: only the allocated pages of each managed disk are downloaded (<em>Get Page Ranges</em>), with <code>HELPER_AZURE_RANGE_WORKERS</code> parallel range requests per disk, straight onto the OCI volume. Azure charges egress for the data leaving the region.</small>
             <small id="gcp-transfer-note" hidden>Google Cloud: each disk is snapshotted and exported to your GCS bucket as a raw object, then copied with parallel HTTP range reads onto the OCI volume. GCS egress and snapshot storage apply until the job finishes.</small>
             <small id="aws-transfer-note" hidden>Amazon EC2: each EBS volume is snapshotted and only the allocated snapshot blocks are downloaded (<em>EBS Direct</em>), with <code>HELPER_AWS_RANGE_WORKERS</code> parallel block reads per disk, straight onto the OCI volume. AWS charges snapshot storage until the job deletes them, plus egress for the data leaving the region.</small>

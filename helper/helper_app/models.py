@@ -213,6 +213,11 @@ class OciTarget(BaseModel):
         description="Download the disks from the ESXi host the VM is registered on instead of through the "
                     "vCenter proxy (same effect as HELPER_NFC_HOST_OVERRIDE, resolved per job)",
     )
+    olvm_direct_from_host: bool = Field(
+        default=False,
+        description="OLVM: download the disks from the KVM host image service (transfer_url, TCP 54322) "
+                    "instead of through the manager proxy (proxy_url, TCP 54323)",
+    )
     pipelined_decode: bool = Field(
         default=False,
         description="Decode and write the VMDK stream on a separate thread (bounded queue of "
@@ -575,7 +580,7 @@ class Job(BaseModel):
     instance_id: Optional[str] = None
     instance_display_name: Optional[str] = None
     boot_volume_id: Optional[str] = None
-    nfc_host: Optional[str] = None  # host the disk streams were downloaded from (vCenter or ESXi)
+    nfc_host: Optional[str] = None  # host the disk streams were downloaded from (vCenter, ESXi, OLVM manager, or KVM)
     guest_fixup: Optional[GuestFixup] = None  # post-copy initramfs rebuild on the target boot volume
     network_fixup: Optional[GuestFixup] = None  # post-copy network configuration (DHCP on the renamed NIC)
     azure_fixup: Optional[GuestFixup] = None  # Azure source: cloud-init / waagent / serial console (Linux only)

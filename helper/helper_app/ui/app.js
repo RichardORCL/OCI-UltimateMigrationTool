@@ -857,7 +857,7 @@
         || "the VM was powered on when the job was created; it is shut down right before the export"]] : []),
       ...(job.guest_fixup ? [["Initramfs fix-up", fixupEl(job.guest_fixup, "See diagnostics.")]] : []),
       ...(job.network_fixup ? [["Network fix-up", fixupEl(job.network_fixup, "See diagnostics.")]] : []),
-      ["Disk download", `OLVM image transfer (allocated extents only)${job.target.volume_vpus_per_gb ? `, ${job.target.volume_vpus_per_gb} VPU/GB volumes` : ""}`],
+      ["Disk download", `OLVM image transfer via ${job.target.olvm_direct_from_host ? "the KVM host" : "the OLVM manager"}${job.nfc_host ? ` (${job.nfc_host})` : ""} (allocated extents only)${job.target.volume_vpus_per_gb ? `, ${job.target.volume_vpus_per_gb} VPU/GB volumes` : ""}`],
       ["Started by", `${job.created_by || "-"} at ${new Date(job.created_at).toLocaleString()}`],
     ] : [
       ["Step", job.step || "-"],
@@ -1559,6 +1559,7 @@
     document.getElementById("azure-transfer-note").hidden = !azure;
     document.getElementById("aws-transfer-note").hidden = !aws;
     document.getElementById("nfc-options").hidden = azure || gcp || aws || olvm;
+    document.getElementById("olvm-transfer-options").hidden = !olvm;
     document.getElementById("esxi-host-hint").textContent = vm.host_name ? `(${vm.host_name})` : "";
     sel("nfc_direct_to_esxi").disabled = !vm.host_name;
     // the NFC options are vCenter-only; Azure downloads page ranges instead
@@ -1595,6 +1596,7 @@
         boot_volume_type_override: fd.get("boot_volume_type_override") || null,
         network_type_override: fd.get("network_type_override") || null,
         nfc_direct_to_esxi: !azure && !gcp && !aws && !olvm && fd.get("nfc_direct_to_esxi") === "on",
+        olvm_direct_from_host: olvm && fd.get("olvm_direct_from_host") === "on",
         pipelined_decode: !azure && !gcp && !aws && !olvm && fd.get("pipelined_decode") === "on",
         rebuild_initramfs: !isWin && fd.get("rebuild_initramfs") === "on",
         fix_network: !isWin && fd.get("fix_network") === "on",

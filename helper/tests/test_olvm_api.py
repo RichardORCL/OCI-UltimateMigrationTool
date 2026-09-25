@@ -107,13 +107,17 @@ def test_olvm_migration_shuts_down_and_copies(env):
     assert tags["oci-umt-source-vm"] == "web-01"
     diag = client.get(f"/api/jobs/{job['id']}/diagnostics").text
     assert "source OLVM VM: web-01" in diag and "engine=olvm.test" in diag and "kind=olvm" in diag
+    assert job["nfc_host"] == "olvm.test" and "direct_from_host=False" in diag
 
     response = client.post("/api/jobs/olvm", json={
         "vm_id": WIN, "power_off_source": True,
-        "target": target(windows_license_type="BRING_YOUR_OWN_LICENSE"),
+        "target": target(windows_license_type="BRING_YOUR_OWN_LICENSE", olvm_direct_from_host=True),
     })
     assert response.status_code == 202, response.text
     assert response.json()["power_off_source"] is False
     job = wait_phase(client, response.json()["id"], "COMPLETED", "FAILED")
     assert job["phase"] == "COMPLETED", job
     assert job["power_off_result"] == "already_off" and env.olvm.vms[WIN].ops == []
+    assert job["target"]["olvm_direct_from_host"] is True and job["nfc_host"] == "host.internal"
+    win_diag = client.get(f"/api/jobs/{job['id']}/diagnostics").text
+    assert "direct_from_host=True" in win_diag and "download_host=host.internal" in win_diag

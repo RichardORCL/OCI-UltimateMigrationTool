@@ -16,6 +16,7 @@ import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Callable, Optional
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -963,6 +964,7 @@ class MigrationRunner:
         export = OlvmDiskExport(
             client, inactivity_timeout_s=self.s.olvm_transfer_inactivity_s,
             ready_timeout_s=self.s.olvm_transfer_timeout_s,
+            direct_from_host=job.target.olvm_direct_from_host,
             check_cancel=lambda: self._check_cancel(job),
         )
         with export:
@@ -1015,12 +1017,17 @@ class MigrationRunner:
             try:
                 writer.ensure_size(disk.capacity_bytes)
                 transfer = export.open(disk_id)
+                host = urlsplit(transfer.url).hostname or ""
+                if host:
+                    job.nfc_host = host
+                via = "KVM host" if job.target.olvm_direct_from_host else "OLVM manager"
                 extents = client.image_extents(transfer.url, transfer.ticket)
                 ranges = allocated_ranges(extents, disk.capacity_bytes)
                 allocated = sum(length for _, length in ranges)
                 disk.stream_bytes = allocated or None
-                self._save(job, message=f"Copying {label} to {disk.device}: {allocated:,} of "
-                                        f"{disk.capacity_bytes:,} bytes allocated in {len(ranges)} range(s)")
+                self._save(job, message=f"Copying {label} via {host or transfer.url} ({via}) to {disk.device}: "
+                                        f"{allocated:,} of {disk.capacity_bytes:,} bytes allocated "
+                                        f"in {len(ranges)} range(s)")
 
                 def fetch(off: int, length: int, current=transfer) -> bytes:
                     try:

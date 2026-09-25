@@ -119,7 +119,8 @@ lowering it never interrupts a running one), the rest stay **QUEUED** ("Waiting 
      up and whose job carries `power_off_source` is shut down (`shutdown`, then `stop` if it is not down
      within `HELPER_OLVM_SHUTDOWN_TIMEOUT_S`; `power_off_result` is `guest_shutdown`, `powered_off` or
      `already_off`). Each disk then gets an image transfer (`POST /imagetransfers`, `format=raw`). The
-     copy reads `/extents` from the engine proxy URL and writes the non-zero ranges
+     copy reads `/extents` from the engine proxy URL (or the KVM host URL when
+     `olvm_direct_from_host` is set) and writes the non-zero ranges
      (`disk/imageio_range_copy.py`, `HELPER_OLVM_RANGE_CHUNK_BYTES`, `HELPER_OLVM_RANGE_WORKERS`).
      OLVM 4.5 authorizes that download with the proxy URL itself. The transfer is finalized
      (`POST /imagetransfers/{id}/finalize`) on success and cancelled (`POST .../cancel`) on failure,
