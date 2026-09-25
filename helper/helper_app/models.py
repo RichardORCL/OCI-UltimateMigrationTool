@@ -792,7 +792,7 @@ class GcpLoginRequest(BaseModel):
 
 class OlvmLoginRequest(BaseModel):
     engine_url: str = Field(description="OLVM engine, for example https://olvm.example.com")
-    username: str = Field(description="Engine user, for example admin@internal")
+    username: str = Field(description="Engine user, for example admin@ovirt or admin@internal")
     password: str
     verify_ssl: bool = Field(
         default=False,

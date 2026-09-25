@@ -19,8 +19,14 @@ log = logging.getLogger(__name__)
 
 API_PREFIX = "/ovirt-engine/api"
 TOKEN_PATH = "/ovirt-engine/sso/oauth/token"
-FOLLOW = "disk_attachments.disk,nics,cluster,bios,os"
+# ``bios`` and ``os`` are already on the VM document. Following them makes current OLVM
+# answer 500 on both the collection and a single VM.
+FOLLOW = "disk_attachments.disk,nics,cluster"
 TOKEN_REFRESH_MARGIN_S = 60
+# Keycloak-backed engines (current OLVM) keep this authz profile. The portal user is often
+# ``admin@ovirt``, which the token endpoint reads as user ``admin`` in a profile named ``ovirt``.
+# That profile does not exist; the same person is ``admin@ovirt@internal``.
+DEFAULT_AUTHZ_PROFILE = "internal"
 
 
 class OlvmError(RuntimeError):
@@ -33,6 +39,21 @@ class OlvmError(RuntimeError):
 
 class OlvmAuthError(OlvmError):
     """Authentication failure (wrong user, password, or a rejected token)."""
+
+
+def _login_names(username: str) -> list[str]:
+    """User names to try at the token endpoint, first the one that was typed.
+
+    A Keycloak portal user such as ``admin@ovirt`` has an ``@`` that is part of the user, not an
+    engine authz profile. The token endpoint's profile is ``internal``, so the working form is
+    ``admin@ovirt@internal``. A name that already ends in that profile is sent once.
+    """
+    name = username.strip()
+    names = [name]
+    suffix = f"@{DEFAULT_AUTHZ_PROFILE}"
+    if not name.lower().endswith(suffix):
+        names.append(f"{name}{suffix}")
+    return names
 
 
 def parse_engine_url(raw: str) -> tuple[str, str]:
@@ -117,12 +138,30 @@ class OlvmClient:
     def token(self) -> str:
         if self._token and self._clock() < self._deadline:
             return self._token
+        names = _login_names(self.username)
+        last: Optional[OlvmAuthError] = None
+        for candidate in names:
+            try:
+                self._fetch_token(candidate)
+            except OlvmAuthError as exc:
+                last = exc
+                if "no valid profile" not in str(exc).lower():
+                    raise
+                continue
+            if candidate != self.username:
+                log.info("OLVM login: %s is not an auth profile, using %s", self.username, candidate)
+            self.username = candidate
+            return self._token
+        assert last is not None
+        raise last
+
+    def _fetch_token(self, username: str) -> None:
         try:
             resp = self.http.post(
                 self.base_url + TOKEN_PATH,
                 data={
                     "grant_type": "password",
-                    "username": self.username,
+                    "username": username,
                     "password": self._password,
                     "scope": "ovirt-app-api",
                 },
@@ -143,7 +182,6 @@ class OlvmClient:
             raise OlvmAuthError(_fault_text(resp) or "OLVM login returned no token")
         self._token = access
         self._deadline = self._clock() + self._lifetime(body)
-        return self._token
 
     def _lifetime(self, body: dict) -> float:
         if body.get("expires_in"):

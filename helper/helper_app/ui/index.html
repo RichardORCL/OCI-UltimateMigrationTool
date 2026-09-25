@@ -572,7 +572,8 @@
         <label class="check"><input type="checkbox" name="verify_ssl"> Verify the server certificate</label>
         <small class="form-hint">Leave off for the engine's internal certificate. When on, the certificate must be issued by a CA the migration tool VM trusts; the same setting is used for the disk download.</small>
         <label>User name
-          <input name="username" type="text" required placeholder="admin@internal">
+          <input name="username" type="text" required placeholder="admin@ovirt">
+          <small>Same user as the Administration Portal, for example <code>admin@ovirt</code> or <code>admin@internal</code>.</small>
         </label>
         <label>Password
           <input name="password" type="password" required>

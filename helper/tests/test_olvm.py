@@ -1,8 +1,14 @@
 """OLVM inventory mapping, preflight and image-extent copy, without the web API."""
 
+from urllib.parse import parse_qs
+
+import httpx
+import pytest
+
 from helper_app.disk.imageio_range_copy import allocated_ranges, copy_extents
 from helper_app.models import Firmware
 from helper_app.oci.mapping import map_guest_os
+from helper_app.olvm.client import OlvmAuthError, OlvmClient
 from helper_app.olvm.export import OlvmDiskExport
 from helper_app.olvm.inventory import (
     OlvmVmDetails,
@@ -107,3 +113,47 @@ def test_export_exit_cancels_open_transfer():
     export.__exit__(RuntimeError, RuntimeError("boom"), None)
     assert stub.phases == [("transfer-1", "cancelled")]
     assert export.open_ids == []
+
+
+def _token_client(handler) -> OlvmClient:
+    return OlvmClient("https://olvm.test", "admin@ovirt", "secret", verify_ssl=False,
+                      http=httpx.Client(transport=httpx.MockTransport(handler)))
+
+
+def _posted_user(request: httpx.Request) -> str:
+    return (parse_qs(request.content.decode()).get("username") or [""])[0]
+
+
+def test_keycloak_user_is_retried_with_internal_profile():
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        user = _posted_user(request)
+        seen.append(user)
+        if user == "admin@ovirt":
+            return httpx.Response(400, json={
+                "error": "Cannot authenticate user No valid profile found in credentials..",
+            })
+        if user == "admin@ovirt@internal":
+            return httpx.Response(200, json={"access_token": "t", "expires_in": 3600})
+        return httpx.Response(401, json={"error": "unexpected"})
+
+    client = _token_client(handler)
+    assert client.token() == "t"
+    client._token = ""
+    client._deadline = 0
+    assert client.token() == "t"
+    assert seen == ["admin@ovirt", "admin@ovirt@internal", "admin@ovirt@internal"]
+
+
+def test_rejected_password_is_not_retried():
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(_posted_user(request))
+        return httpx.Response(400, json={"error": "Cannot authenticate user Invalid user credentials."})
+
+    client = _token_client(handler)
+    with pytest.raises(OlvmAuthError, match="Invalid user credentials"):
+        client.token()
+    assert seen == ["admin@ovirt"]
