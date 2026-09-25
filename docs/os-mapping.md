@@ -1,9 +1,11 @@
 # Mapping tables
 
-Implemented in `helper/helper_app/oci/mapping.py`. Every source (VMware, OLVM, Azure, AWS, Google Cloud,
+Implemented in `helper/helper_app/oci/mapping.py`. Every source (VMware, Hyper-V, OLVM, Azure, AWS, Google Cloud,
 OVA) is reduced to the same `VmSpec` / OS metadata before a seed image is chosen. VMware supplies a
 vSphere `guestId`; OLVM inventory prefers the guest agent's distribution and version and otherwise maps
-the oVirt `os.type` (`rhel_9x64`, `ol_8x64`, `windows_2022`, …) onto the same guest ids, and Azure, AWS
+the oVirt `os.type` (`rhel_9x64`, `ol_8x64`, `windows_2022`, …) onto the same guest ids. Hyper-V inventory
+maps integration-services `OSName` / `OSVersion` (for example Ubuntu 24.04, Windows Server 2022) onto the
+same guest ids, and Azure, AWS
 and Google Cloud inventory code synthesizes an equivalent guest id
 from the image/AMI/license so the table below still applies.
 
@@ -51,7 +53,7 @@ registered as Windows (and require a license type).
 ## Launch options
 
 Firmware, Secure Boot and device model come from the source inventory (vSphere `config.firmware` /
-`efiSecureBootEnabled`, OLVM `bios.type`, Azure Hyper-V generation / Trusted Launch, AWS boot mode,
+`efiSecureBootEnabled`, OLVM `bios.type`, Hyper-V generation (1 BIOS, 2 UEFI) and Secure Boot, Azure Hyper-V generation / Trusted Launch, AWS boot mode,
 GCP Shielded VM, or the OVA/ISO form). They map to the same OCI launch options:
 
 | Source | OCI `LaunchOptions` |

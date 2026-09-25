@@ -17,10 +17,12 @@ from helper_app.auth import (
 from helper_app.aws.client import AwsAuthError, AwsError
 from helper_app.azure.client import AzureAuthError, AzureError
 from helper_app.gcp.client import GcpAuthError, GcpError
+from helper_app.hyperv.client import HypervAuthError, HypervError
 from helper_app.models import (
     AwsLoginRequest,
     AzureLoginRequest,
     GcpLoginRequest,
+    HypervLoginRequest,
     LoginRequest,
     OlvmLoginRequest,
     SessionInfo,
@@ -183,6 +185,25 @@ async def olvm_login(body: OlvmLoginRequest, request: Request, response: Respons
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
     st.sessions.logout(session_token(request))
     session = st.sessions.create(None, olvm=olvm)
+    _set_cookie(st, response, session.token)
+    return session.info()
+
+
+@router.post("/hyperv/login", response_model=SessionInfo)
+async def hyperv_login(body: HypervLoginRequest, request: Request, response: Response):
+    """Log in to a Hyper-V host. The password stays in memory with the session, like a vCenter login."""
+    require_unlocked_if_protected(request)
+    st = request.app.state
+    try:
+        hyperv = await asyncio.to_thread(
+            st.hyperv.login, body.host, body.username, body.password,
+            use_https=body.use_https, verify_ssl=body.verify_ssl)
+    except HypervAuthError as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(exc))
+    except HypervError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
+    st.sessions.logout(session_token(request))
+    session = st.sessions.create(None, hyperv=hyperv)
     _set_cookie(st, response, session.token)
     return session.info()
 

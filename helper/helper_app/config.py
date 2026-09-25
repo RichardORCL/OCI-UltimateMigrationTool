@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     olvm_range_workers: int = 4
     olvm_range_chunk_bytes: int = 8 * 1024 * 1024
 
+    # Hyper-V source: WinRM (5986/5985) for inventory and power, SMB (445) to read the VHD/VHDX files
+    # after the VM is shut down. Unallocated blocks of a dynamic disk are skipped.
+    hyperv_shutdown_timeout_s: int = 300
+    hyperv_range_workers: int = 4
+    hyperv_range_chunk_bytes: int = 8 * 1024 * 1024
+
     # Logging (both adjustable from the Setup page; changes persist in runtime_settings_path)
     log_level: str = "INFO"
     oci_log_requests: bool = False  # enable redacted OCI SDK diagnostic logging at DEBUG (no raw wire dumps)

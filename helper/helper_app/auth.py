@@ -66,6 +66,14 @@ async def require_gcp_session(request: Request) -> UserSession:
     return session
 
 
+async def require_hyperv_session(request: Request) -> UserSession:
+    """A session with a Hyper-V host login behind it (Hyper-V inventory and migrations)."""
+    session = await require_session(request)
+    if session.hyperv is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "this function needs a Hyper-V login")
+    return session
+
+
 async def require_olvm_session(request: Request) -> UserSession:
     """A session with an OLVM engine login behind it (OLVM inventory and migrations)."""
     session = await require_session(request)

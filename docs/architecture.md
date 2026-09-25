@@ -6,11 +6,11 @@ The whole tool is one service, the **OCI Ultimate Migration Tool**, running on a
 (the *OCI Migration Tool VM*):
 
 - a web UI (`/ui`) and REST API (`/api`) served by FastAPI/uvicorn over TLS on port 8443;
-- a source client chosen at login: pyVmomi for vCenter/ESXi, or a small `httpx` REST client for OLVM
+- a source client chosen at login: pyVmomi for vCenter/ESXi, WinRM and SMB for a Hyper-V host, or a small `httpx` REST client for OLVM
   (oVirt API 4 and the image proxy), Azure (Entra ID + ARM), AWS (SigV4: STS, EC2, EBS Direct) or
   Google Cloud (service-account JWT: Compute Engine, Cloud Build, Cloud Storage);
-- the migration engine that provisions the OCI target, pulls the disks from the source (NFC, OLVM image
-  transfer, Azure page blob, EBS Direct, GCS export tarball, or an OVA/OVF in Object Storage) and writes them onto OCI
+- the migration engine that provisions the OCI target, pulls the disks from the source (NFC, Hyper-V SMB,
+  OLVM image transfer, Azure page blob, EBS Direct, GCS export tarball, or an OVA/OVF in Object Storage) and writes them onto OCI
   volumes attached to the Migration Tool itself.
 
 There is no agent in the source environment and no shared secret: the source platform's own RBAC
@@ -125,6 +125,13 @@ lowering it never interrupts a running one), the rest stay **QUEUED** ("Waiting 
      OLVM 4.5 authorizes that download with the proxy URL itself. The transfer is finalized
      (`POST /imagetransfers/{id}/finalize`) on success and cancelled (`POST .../cancel`) on failure,
      retry or exit; a phase PUT is not used, because this engine answers 405 and would leave the disk locked.
+   - **Hyper-V jobs** (`MigrationRunner._run_hyperv`) follow the same shape: a VM that is still running
+     and whose job carries `power_off_source` is shut down (`Stop-VM`, then `Stop-VM -TurnOff` if it is
+     not off within `HELPER_HYPERV_SHUTDOWN_TIMEOUT_S`; `power_off_result` is `guest_shutdown`,
+     `powered_off` or `already_off`). Each VHD/VHDX is then opened read-only over SMB and parsed
+     (`disk/vhd_image.py`). Unallocated blocks of a dynamic disk are skipped; a differencing chain is
+     read from the leaf and its parents. The ranges are written with the shared range-copy workers
+     (`HELPER_HYPERV_RANGE_CHUNK_BYTES`, `HELPER_HYPERV_RANGE_WORKERS`). Nothing is written on the host.
    - **Azure jobs** (`MigrationRunner._run_azure`) replace the NFC part of this phase:
      - *deallocate* mode: a VM that is still running (or stopped but allocated) and whose job carries the
        operator's `power_off_source` confirmation is deallocated now (`POST .../deallocate`, polled up to
@@ -228,13 +235,13 @@ UI requires a choice before starting and lets you change it afterwards
 ## Security
 
 - Credentials are never stored on disk; the Migration Tool holds the source session (vCenter cookie,
-  Azure/AWS/GCP secrets and tokens, OLVM password and bearer token) per logged-in user in memory only. The browser may remember
+  Azure/AWS/GCP secrets and tokens, OLVM password and bearer token, Hyper-V password) per logged-in user in memory only. The browser may remember
   non-secret fields (last vCenter host, Azure tenant/client ID), never passwords or keys.
 - The API is protected by the session cookie (HttpOnly, SameSite=strict, `Secure` unless
   `HELPER_COOKIE_SECURE=false` for local development). An optional UI password gates the whole UI.
 - OCI access uses the Migration Tool's instance principal; the Terraform stack scopes the policy to a
   compartment (`policy_scope_compartment_ocid`).
-- vCenter and OLVM TLS verification are chosen per login (*Verify the server certificate*). Azure, AWS and
+- vCenter, OLVM and Hyper-V WinRM TLS verification are chosen per login (*Verify the server certificate*). Azure, AWS and
   Google Cloud TLS is always verified (public CA certificates).
 - Required source privileges are listed per platform in [how-it-works.md](how-it-works.md). Export
   access (NFC lease, OLVM image transfer, Azure SAS, AWS/GCP snapshots, GCS objects) is released when the job ends.

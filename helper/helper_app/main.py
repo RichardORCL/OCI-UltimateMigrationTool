@@ -21,6 +21,7 @@ from helper_app.api import (
     routes_azure_vms,
     routes_console,
     routes_gcp_vms,
+    routes_hyperv_vms,
     routes_instances,
     routes_jobs,
     routes_oci,
@@ -35,6 +36,7 @@ from helper_app.console.manager import ConsoleManager
 from helper_app.console.tunnel import TunnelFactory, open_vnc_stream
 from helper_app.disk.devices import DeviceScanner, scan_block_devices
 from helper_app.gcp.session import GcpConnector
+from helper_app.hyperv.session import HypervConnector
 from helper_app.jobs.runner import MigrationRunner
 from helper_app.jobs.store import JobStore
 from helper_app.oci.clients import OciClients, build_clients
@@ -58,6 +60,7 @@ def create_app(
     gcp: Optional[GcpConnector] = None,
     aws: Optional[AwsConnector] = None,
     olvm: Optional[OlvmConnector] = None,
+    hyperv: Optional[HypervConnector] = None,
     export_factory=None,
     updater: Optional[Updater] = None,
     command_runner: Runner = _default_runner,
@@ -84,6 +87,7 @@ def create_app(
         app.state.gcp = gcp or GcpConnector(settings)
         app.state.aws = aws or AwsConnector(settings)
         app.state.olvm = olvm or OlvmConnector(settings)
+        app.state.hyperv = hyperv or HypervConnector(settings)
         app.state.sessions = SessionStore(settings.session_ttl_s)
         app.state.ui_password = UiPasswordStore(settings.ui_password_hash_path)
         app.state.command_runner = command_runner  # runs git/systemctl/journalctl (injectable for tests)
@@ -118,6 +122,7 @@ def create_app(
     app.include_router(routes_gcp_vms.router)
     app.include_router(routes_aws_vms.router)
     app.include_router(routes_olvm_vms.router)
+    app.include_router(routes_hyperv_vms.router)
     app.include_router(routes_jobs.router)
     app.include_router(routes_console.router)
     app.include_router(routes_oci.router)

@@ -21,8 +21,8 @@ Contents
 
 Everything runs on a single VM in OCI, the **OCI Migration Tool VM**. Migrations run **without VDDK and
 without temporary storage on that VM**: source disks are streamed straight onto OCI block volumes that
-are attached to the tool VM while the copy runs. Every source (VMware, OLVM, Azure, AWS, Google Cloud, OVA)
-ends in the same pipeline; only the way the source disks are read differs. OLVM is read the same way as
+are attached to the tool VM while the copy runs. Every source (VMware, Hyper-V, OLVM, Azure, AWS, Google Cloud, OVA)
+ends in the same pipeline; only the way the source disks are read differs. Hyper-V and OLVM are read the same way as
 VMware: the VM is shut down, then its disks are streamed straight onto the OCI volumes.
 
 1. **Seed image.** The tool registers a tiny *seed* custom image matching the VM's firmware (BIOS/UEFI),
@@ -91,7 +91,7 @@ The account needs `VirtualMachine.Provisioning.ExportOVF` / *Allow disk access* 
 `VirtualMachine.Interact.PowerOff` when the tool is to shut the VM down). The tool VM must reach the
 endpoint on 443 (or the port given at login) over your VPN/FastConnect. The VM must be powered off during
 the copy (the tool shuts it down otherwise). Encrypted VMs (including Windows 11 with a vTPM) cannot be
-exported by vSphere; decrypt them first. vSphere Hosted (Workstation/Fusion), Hyper-V and unmanaged KVM
+exported by vSphere; decrypt them first. vSphere Hosted (Workstation/Fusion) and unmanaged KVM
 (a host that is not managed by OLVM) are **not** supported - see [limitations.md](limitations.md).
 
 ## Oracle Linux Virtualization Manager
@@ -145,6 +145,52 @@ needs the image proxy; a direct KVM download needs TCP 54322 to the host OLVM se
 hosted-engine VM, disks that are not `ok`, and VMs that are migrating or otherwise transient are refused
 before anything is created in OCI. The VM stays powered off afterwards. There is no snapshot-while-running
 mode.
+
+## Hyper-V
+
+You log in to one Hyper-V host, the server Hyper-V Manager connects to, with a user name and password
+(`HOST\Administrator` or `DOMAIN\user`). WinRM uses HTTPS on port 5986 by default, or HTTP on 5985 when
+HTTPS is off. Authentication is NTLM. The password stays in memory for the browser session and is the
+credential for the SMB disk read (`POST /api/auth/hyperv/login`). The tool lists that host's virtual
+machines (`GET /api/hyperv/vms`) and maps each one to a `VmSpec` (`hyperv/inventory.py`): generation 1 is
+BIOS, generation 2 is UEFI, plus Secure Boot when the firmware reports it. The boot disk is first.
+Guest OS comes from integration services (`OSName` and `OSVersion`) when the guest has reported it;
+otherwise the VM stays generic and the operating system on the migration form overrides it.
+
+After the OCI side is prepared the tool:
+
+- shuts the source VM down if it is still running (confirmed by the operator when starting the job:
+  `Stop-VM`, then `Stop-VM -TurnOff` if it has not powered off after `HELPER_HYPERV_SHUTDOWN_TIMEOUT_S`);
+- reads each VHD or VHDX over SMB. A drive path such as `C:\Hyper-V\disk.vhdx` is opened as
+  `\\host\C$\Hyper-V\disk.vhdx`. A path that is already a UNC path is opened with the same credentials.
+  Dynamic disks skip unallocated blocks. A checkpoint is read from the active differencing file and its
+  parents; those files are not merged on the host. A fixed disk is a full copy, because the file has no
+  map of unused guest space.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant H as Migration Tool VM (OCI)
+    participant HV as Hyper-V host
+    participant OCI as OCI APIs
+    B->>H: Log in with host, user and password
+    H->>HV: WinRM NTLM, Get-VM
+    B->>H: List VMs, inspect, start migration
+    H->>OCI: Provision volumes on the tool VM
+    H->>HV: Stop-VM, then TurnOff if still running
+    loop each disk
+        H->>HV: SMB read of the VHD or VHDX
+        H->>H: Skip unallocated blocks, pwrite onto the volume
+    end
+    H->>H: Linux guest fix-ups
+    H->>OCI: Attach to target and start
+```
+
+Nothing is written on the Hyper-V host. The tool VM must reach WinRM (TCP 5986, or 5985 when HTTPS is off)
+and SMB (TCP 445). System Center Virtual Machine Manager is not a source; connect to the node that owns
+the VM. Saved or paused VMs, pass-through disks, shared VHDX, shielded VMs, disks above 32 TB, a
+differencing disk whose parent file is missing, and VMs with no disks are refused before anything is
+created in OCI. The VM stays powered off afterwards. There is no snapshot-while-running mode.
 
 ## Microsoft Azure
 
@@ -441,6 +487,8 @@ the *Maximum compatibility* preset (IDE + E1000) - see [limitations.md](limitati
 | Migration tool -> OLVM engine | TCP 443 | OLVM source only: engine REST API and the SSO token endpoint |
 | Migration tool -> OLVM image proxy | TCP 54323 | OLVM source only: image-transfer download through the manager. Used unless *Download the disks directly from the KVM host* is selected |
 | Migration tool -> OLVM KVM hosts | TCP 54322 | Only with *Download the disks directly from the KVM host* (per migration). The engine chooses the host that serves the disk |
+| Migration tool -> Hyper-V host | TCP 5986 | Hyper-V source only: WinRM over HTTPS (inventory, power). HTTP on TCP 5985 when HTTPS is off at login |
+| Migration tool -> Hyper-V host (SMB) | TCP 445 | Hyper-V source only: read-only copy of the VHD/VHDX files, usually through the admin share. A disk that already lives on a UNC path is read from that server |
 | Migration tool -> vCenter | TCP 443 | SOAP API and the NFC disk download (vCenter proxies ESXi by default) |
 | Migration tool -> ESXi hosts | TCP 443 | Only with *Download the disks directly from the ESXi host* (per migration) or `HELPER_NFC_HOST_OVERRIDE`; bypasses the vCenter proxy, usually several times faster |
 | Migration tool -> `login.microsoftonline.com`, `management.azure.com` | TCP 443 | Azure source only: Entra ID token, Azure Resource Manager (VM inventory, deallocate, snapshots, export SAS). Needs a NAT gateway or other internet route |

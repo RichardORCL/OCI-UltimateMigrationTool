@@ -42,6 +42,9 @@ See [install-helper.md](install-helper.md#configuration-reference) for usage and
 | `HELPER_OLVM_TRANSFER_INACTIVITY_S` | `300` |
 | `HELPER_OLVM_RANGE_WORKERS` | `4` |
 | `HELPER_OLVM_RANGE_CHUNK_BYTES` | `8388608` |
+| `HELPER_HYPERV_SHUTDOWN_TIMEOUT_S` | `300` |
+| `HELPER_HYPERV_RANGE_WORKERS` | `4` |
+| `HELPER_HYPERV_RANGE_CHUNK_BYTES` | `8388608` |
 | `HELPER_LOG_LEVEL` | `"INFO"` |
 | `HELPER_OCI_LOG_REQUESTS` | `false` |
 | `HELPER_RUNTIME_SETTINGS_PATH` | `"/var/lib/vc-oci-helper/runtime-settings.json"` |

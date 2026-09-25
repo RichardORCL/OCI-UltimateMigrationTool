@@ -109,6 +109,18 @@ def _source_lines(job: Job, settings: Settings) -> list[str]:
             f"direct_from_host={job.target.olvm_direct_from_host} download_host={job.nfc_host or '-'}",
             _fixup_lines(job),
         ]
+    if job.vm is not None and job.hyperv is not None:
+        h = job.hyperv
+        chains = ";".join(",".join(chain) for chain in h.disks)
+        return [
+            f"  source Hyper-V VM: {job.vm.name} ({job.vm.moid}) guest={job.vm.guest_id} firmware={job.vm.firmware} "
+            f"cpu={job.vm.num_cpu} mem_mb={job.vm.memory_mb} disks={len(job.vm.disks)} "
+            f"power_off_source={job.power_off_source} power_off_result={job.power_off_result or '-'}",
+            f"  hyperv: host={h.host} chains={chains or '-'} "
+            f"range_workers={settings.hyperv_range_workers} chunk_bytes={settings.hyperv_range_chunk_bytes} "
+            f"download_host={job.nfc_host or '-'}",
+            _fixup_lines(job),
+        ]
     if job.vm is not None and job.aws is not None:
         a = job.aws
         return [

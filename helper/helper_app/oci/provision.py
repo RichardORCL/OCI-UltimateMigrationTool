@@ -27,6 +27,7 @@ from helper_app.branding import (
     TAG_SOURCE_AZURE,
     TAG_SOURCE_ESXI_HOST,
     TAG_SOURCE_GCP,
+    TAG_SOURCE_HYPERV,
     TAG_SOURCE_MOID,
     TAG_SOURCE_OLVM,
     TAG_SOURCE_VCENTER,
@@ -1066,6 +1067,8 @@ def source_tags(job: Job) -> dict[str, str]:
         prefix = f"AWS shape {job.aws.instance_type}, "
     elif job.olvm is not None and job.olvm.cluster:
         prefix = f"OLVM cluster {job.olvm.cluster}, "
+    elif job.hyperv is not None and job.hyperv.host:
+        prefix = f"Hyper-V host {job.hyperv.host}, "
     details = (prefix + f"{vm.num_cpu} vCPU, {vm.memory_mb / 1024:g} GB RAM, {len(vm.disks)} disk(s) "
                f"{_gb(total):g} GB [{disks}], {len(vm.nics)} NIC(s), {vm.guest_full_name or vm.guest_id}, {firmware}")
     tags = {
@@ -1086,6 +1089,8 @@ def source_tags(job: Job) -> dict[str, str]:
         tags[TAG_SOURCE_AWS] = f"{job.aws.account_id}/{job.aws.region}"[:TAG_VALUE_MAX]
     if job.olvm is not None:
         tags[TAG_SOURCE_OLVM] = f"{job.olvm.engine_host}/{job.olvm.cluster}".strip("/")[:TAG_VALUE_MAX]
+    if job.hyperv is not None:
+        tags[TAG_SOURCE_HYPERV] = job.hyperv.host[:TAG_VALUE_MAX]
     return tags
 
 

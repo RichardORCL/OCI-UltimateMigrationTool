@@ -48,6 +48,12 @@
             tool shuts them down and copies their disks into OCI instances.</p>
           <span class="button primary">Log in to OLVM</span>
         </a>
+        <a class="card start-choice" href="#/hyperv/login" id="start-hyperv">
+          <h3>Hyper-V</h3>
+          <p>Migrate virtual machines from a Hyper-V host to OCI: log in to the host, pick the VMs, and the migration
+            tool shuts them down and copies their disks into OCI instances.</p>
+          <span class="button primary">Log in to Hyper-V</span>
+        </a>
         <div class="card start-choice">
           <h3>Microsoft Azure</h3>
           <p>Migrate virtual machines from Azure to OCI: log in with a service principal, pick the VMs, and the migration
@@ -581,6 +587,37 @@
         <div class="actions">
           <span id="olvm-login-error" class="error"></span>
           <button type="submit" class="primary" id="olvm-login-btn">Log in</button>
+        </div>
+      </form>
+    </section>
+  </template>
+
+  <!-- ------------------------------------------------------------------ Hyper-V login -->
+  <template id="tpl-hyperv-login">
+    <section class="card login">
+      <h2>Log in to Hyper-V</h2>
+      <p class="muted">Use an account that can manage the Hyper-V host (Hyper-V Administrators or a local
+        administrator). The same account is used to read the virtual disks over SMB.</p>
+      <form id="hyperv-login-form" class="form" autocomplete="on">
+        <label>Hyper-V host
+          <input name="host" type="text" required list="hyperv-recent" placeholder="hv.example.com" autocapitalize="off" spellcheck="false">
+          <datalist id="hyperv-recent"></datalist>
+          <small>Host name or IP of the Hyper-V server. The migration tool VM must reach WinRM (TCP 5986, or 5985 when HTTPS is off) and SMB (TCP 445).</small>
+        </label>
+        <label class="check"><input type="checkbox" name="use_https" checked> Use HTTPS for WinRM</label>
+        <small class="form-hint">On uses port 5986. Off uses HTTP on port 5985.</small>
+        <label class="check"><input type="checkbox" name="verify_ssl"> Verify the server certificate</label>
+        <small class="form-hint">Leave off for a self-signed WinRM certificate. When on, the certificate must be issued by a CA the migration tool VM trusts.</small>
+        <label>User name
+          <input name="username" type="text" required placeholder="HOST\Administrator">
+          <small>A local account (<code>HOST\Administrator</code>) or a domain account (<code>DOMAIN\user</code>).</small>
+        </label>
+        <label>Password
+          <input name="password" type="password" required>
+        </label>
+        <div class="actions">
+          <span id="hyperv-login-error" class="error"></span>
+          <button type="submit" class="primary" id="hyperv-login-btn">Log in</button>
         </div>
       </form>
     </section>

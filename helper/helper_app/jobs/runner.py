@@ -36,6 +36,7 @@ from helper_app.disk.gcs_range_copy import (
 )
 from helper_app.disk.imageio_range_copy import ImageioAuthExpired, ImageioCopyError, allocated_ranges, copy_extents
 from helper_app.disk.pipeline import PipelinedDecoder
+from helper_app.disk.vhd_image import ImageError, open_chain
 from helper_app.disk.vhd_range_copy import VhdCopyError, blob_length, copy_ranges, list_page_ranges
 from helper_app.disk.vmdk_stream import DecodeStats, StreamOptimizedDecoder, VmdkFormatError
 from helper_app.disk.writer import BlockDeviceWriter
@@ -43,6 +44,10 @@ from helper_app.gcp.client import GcpError
 from helper_app.gcp.export import GcpDiskExport
 from helper_app.gcp.inventory import power_state as gcp_power_state
 from helper_app.guest.fixup import GuestFixer, GuestFixerFn
+from helper_app.hyperv.client import HypervError
+from helper_app.hyperv.inventory import power_state as hyperv_power_state
+from helper_app.hyperv.power import shut_down as hyperv_shut_down
+from helper_app.hyperv.smb import to_unc
 from helper_app.jobs.progress import RateMeter
 from helper_app.jobs.source_cleanup import release_source
 from helper_app.jobs.store import JobStore, utcnow
@@ -261,6 +266,8 @@ class MigrationRunner:
                 self._run_aws(job)
             elif job.kind == "olvm":
                 self._run_olvm(job)
+            elif job.kind == "hyperv":
+                self._run_hyperv(job)
             else:
                 self._run(job)
         except JobCancelled:
@@ -1071,6 +1078,139 @@ class MigrationRunner:
                     time.sleep(min(30, 5 * attempt))
             finally:
                 writer.close()
+        raise ExportError(f"{label} failed after {disk.attempts} attempts: {last_error}")
+
+    # ------------------------------------------------------------------ Hyper-V
+    def _run_hyperv(self, job: Job) -> None:
+        session = self._sessions[job.id]
+        if session.hyperv is None:
+            raise ExportError("the session that created the job has no Hyper-V login")
+        client = session.hyperv.client
+        info = job.hyperv
+        if info is None:
+            raise ExportError("job has no Hyper-V source information")
+
+        self._save(job, JobPhase.PROVISIONING, "Requesting target instance and volumes in OCI")
+        self.prov.prepare(job, check_cancel=lambda: self._check_cancel(job))
+        self._check_cancel(job)
+
+        self._save(job, JobPhase.EXPORTING, "Checking the source VM in Hyper-V")
+        vm_id = job.vm.moid
+        vm = client.get_vm(vm_id)
+        state = hyperv_power_state(vm)
+        job.vm.power_state = state
+        if state != "poweredOff":
+            if not job.power_off_source:
+                raise ExportError(f"VM is {state}; it must be shut down during the export")
+            job.step = "power_off"
+            self._save(job, message=f"Shutting down {job.vm.name} in Hyper-V")
+            result = hyperv_shut_down(client, vm_id, self.s.hyperv_shutdown_timeout_s,
+                                      on_wait=lambda: self._check_cancel(job), sleep=time.sleep)
+            job.power_off_result = result
+            job.vm.power_state = "poweredOff"
+            self._save(job, message=f"{job.vm.name} powered off ({result.replace('_', ' ')})")
+        else:
+            job.power_off_result = "already_off"
+
+        job.step = "export_access"
+        job.nfc_host = session.hyperv.hostname
+        self._save(job, message=f"Reading disks from {session.hyperv.hostname} over SMB")
+        job.transfer.started_at = job.transfer.started_at or utcnow()
+        job.transfer.percent = 0
+        self.store.put(job)
+        try:
+            for disk in job.disks:
+                if disk.status == DiskStatus.COPIED:
+                    continue
+                self._check_cancel(job)
+                self._copy_hyperv_disk(job, disk, session.hyperv)
+            job.transfer.percent = 100
+        finally:
+            job.transfer.finished_at = utcnow()
+            job.transfer.throughput_bps = 0.0
+        job.step = "export_released"
+        self._save(job, message="Disk files closed")
+
+        self._check_cancel(job)
+        self._guest_fixup(job)
+
+        self._save(job, JobPhase.FINALIZING, "Attaching volumes to the target instance")
+        self.prov.finalize(job)
+        self._save(job, message=f"Migration complete: instance {job.instance_id}")
+
+    def _copy_hyperv_disk(self, job: Job, disk: DiskState, session) -> None:
+        last_error: Optional[Exception] = None
+        label = disk.label or f"disk {disk.index}"
+        info = job.hyperv
+        if info is None or disk.index >= len(info.disks):
+            raise ExportError(f"{label} has no Hyper-V disk path")
+        chain = info.disks[disk.index]
+        for attempt in range(1, self.s.disk_retry_attempts + 1):
+            self._check_cancel(job)
+            disk.attempts = attempt
+            disk.status = DiskStatus.COPYING
+            disk.bytes_received = disk.bytes_written = disk.grains_written = 0
+            disk.percent = 0
+            disk.error = None
+            job.step = "copying"
+            self._save(job, message=f"Opening {label} over SMB "
+                                    f"(attempt {attempt}/{self.s.disk_retry_attempts})")
+            readers = []
+            try:
+                writer = BlockDeviceWriter(disk.device, expected_min_size=disk.capacity_bytes)
+            except (OSError, ValueError) as exc:
+                raise ExportError(f"cannot open {disk.device}: {exc}") from exc
+            meter = RateMeter()
+            written_before = sum(d.bytes_written for d in job.disks if d is not disk)
+            try:
+                writer.ensure_size(disk.capacity_bytes)
+                for path in chain:
+                    readers.append(session.open_disk(to_unc(session.hostname, path)))
+                image = open_chain(readers)
+                ranges = [(start, length) for start, length in image.allocated() if length > 0]
+                allocated = sum(length for _, length in ranges)
+                disk.stream_bytes = allocated or None
+                host = session.hostname
+                self._save(job, message=f"Copying {label} via SMB from {host} to {disk.device}: "
+                                        f"{allocated:,} of {disk.capacity_bytes:,} bytes allocated "
+                                        f"in {len(ranges)} range(s)")
+
+                def fetch(off: int, length: int, current=image) -> bytes:
+                    return current.read(off, length)
+
+                stats = copy_extents(
+                    fetch, ranges, writer,
+                    chunk_bytes=self.s.hyperv_range_chunk_bytes, workers=self.s.hyperv_range_workers,
+                    retries=self.s.disk_retry_attempts,
+                    check_cancel=lambda: self._check_cancel(job),
+                    on_progress=self._cloud_progress_callback(job, disk, meter, written_before),
+                )
+                self._record_cloud_progress(job, disk, stats.bytes_received, stats.bytes_written,
+                                            stats.chunks_written, meter.rate(), written_before)
+                disk.percent = 100
+                disk.throughput_bps = 0.0
+                disk.status = DiskStatus.COPIED
+                self._save(job, message=f"{label} copied ({stats.bytes_received:,} bytes in "
+                                        f"{stats.chunks_written:,} range request(s)"
+                                        + (f", {stats.retries} retried" if stats.retries else "") + ")")
+                return
+            except JobCancelled:
+                disk.status = DiskStatus.FAILED
+                disk.error = "cancelled"
+                raise
+            except (ExportError, ImageError, ImageioCopyError, HypervError, OSError) as exc:
+                last_error = exc
+                disk.status = DiskStatus.FAILED
+                disk.throughput_bps = 0.0
+                job.transfer.throughput_bps = 0.0
+                disk.error = str(exc)
+                self._save(job, message=f"{label} attempt {attempt} failed: {exc}")
+                if attempt < self.s.disk_retry_attempts:
+                    time.sleep(min(30, 5 * attempt))
+            finally:
+                writer.close()
+                for reader in readers:
+                    reader.close()
         raise ExportError(f"{label} failed after {disk.attempts} attempts: {last_error}")
 
     def _guest_fixup(self, job: Job) -> None:

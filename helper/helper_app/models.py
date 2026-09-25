@@ -479,7 +479,7 @@ class GuestFixup(BaseModel):
     log: list[str] = Field(default_factory=list, description="Step-by-step notes for diagnostics")
 
 
-JobKind = Literal["vmware", "iso", "ova", "ovaexport", "azure", "gcp", "aws", "olvm"]
+JobKind = Literal["vmware", "iso", "ova", "ovaexport", "azure", "gcp", "aws", "olvm", "hyperv"]
 
 AzureCaptureMode = Literal["deallocate", "snapshot"]
 GcpCaptureMode = Literal["stop", "snapshot"]
@@ -535,6 +535,14 @@ class OlvmSourceInfo(BaseModel):
     disk_ids: list[str] = Field(default_factory=list, description="Image disk IDs, in DiskSpec order")
 
 
+class HypervSourceInfo(BaseModel):
+    """Where a Hyper-V job's VM lives. Disks are read over SMB after the VM is shut down."""
+
+    host: str
+    disks: list[list[str]] = Field(default_factory=list,
+                                   description="Each disk's file chain, leaf path first, in DiskSpec order")
+
+
 class AwsSourceInfo(BaseModel):
     """Where an AWS job's instance lives and how its EBS volumes are captured."""
 
@@ -553,13 +561,13 @@ class AwsSourceInfo(BaseModel):
 
 class Job(BaseModel):
     id: str
-    kind: JobKind = "vmware"  # vmware: VM from vSphere; iso/ova: Object Storage; azure/gcp/aws/olvm: other sources
+    kind: JobKind = "vmware"  # vmware from vSphere; iso/ova from Object Storage; azure/gcp/aws/olvm/hyperv other sources
     phase: JobPhase = JobPhase.QUEUED
     step: str = ""
     step_percent: Optional[int] = None  # progress of the current step when OCI reports one (work requests)
     message: str = ""
     error: Optional[str] = None
-    vm: Optional[VmSpec] = None  # the source VM for VMware, Azure, GCP, AWS or OLVM jobs
+    vm: Optional[VmSpec] = None  # the source VM for VMware, Azure, GCP, AWS, OLVM or Hyper-V jobs
     iso: Optional[IsoSpec] = None  # the installer ISO (iso jobs)
     iso_image_id: Optional[str] = None  # custom image imported from the ISO (iso jobs)
     ova: Optional[OvaSpec] = None  # the OVA object (ova jobs)
@@ -570,6 +578,7 @@ class Job(BaseModel):
     gcp: Optional[GcpSourceInfo] = None  # project / zone / GCS export (gcp jobs)
     aws: Optional[AwsSourceInfo] = None  # account / region / capture mode (aws jobs)
     olvm: Optional[OlvmSourceInfo] = None  # engine / cluster / disk ids (olvm jobs)
+    hyperv: Optional[HypervSourceInfo] = None  # host and VHD/VHDX path chains (hyperv jobs)
     vcenter_host: str = ""  # vCenter the VM was inspected on ("host" or "host:port"); tagged onto the instance
     target: OciTarget
     power_off_source: bool = False  # VM was powered on when the job was created; shut it down before the export
@@ -580,7 +589,7 @@ class Job(BaseModel):
     instance_id: Optional[str] = None
     instance_display_name: Optional[str] = None
     boot_volume_id: Optional[str] = None
-    nfc_host: Optional[str] = None  # host the disk streams were downloaded from (vCenter, ESXi, OLVM manager, or KVM)
+    nfc_host: Optional[str] = None  # host the disk streams were downloaded from (vCenter, ESXi, OLVM, KVM, or Hyper-V)
     guest_fixup: Optional[GuestFixup] = None  # post-copy initramfs rebuild on the target boot volume
     network_fixup: Optional[GuestFixup] = None  # post-copy network configuration (DHCP on the renamed NIC)
     azure_fixup: Optional[GuestFixup] = None  # Azure source: cloud-init / waagent / serial console (Linux only)
@@ -729,6 +738,18 @@ class CreateAzureJobRequest(BaseModel):
     )
 
 
+class CreateHypervJobRequest(BaseModel):
+    """Migrate a Hyper-V VM (needs a Hyper-V host login on the session)."""
+
+    vm_id: str = Field(description="Hyper-V virtual machine id (GUID)")
+    target: OciTarget
+    power_off_source: bool = Field(
+        default=False,
+        description="Required for a running VM: the user confirmed that the migration tool shuts it down "
+                    "right before the disk copy (guest shutdown, hard turn-off as fallback)",
+    )
+
+
 class CreateOlvmJobRequest(BaseModel):
     """Migrate an OLVM VM (needs an OLVM login on the session)."""
 
@@ -800,6 +821,17 @@ class GcpLoginRequest(BaseModel):
     export_bucket: str = Field(description="GCS bucket for temporary snapshot exports (objects deleted after the job)")
 
 
+class HypervLoginRequest(BaseModel):
+    host: str = Field(description="Hyper-V host, for example hv.example.com")
+    username: str = Field(description="Host or domain account, for example HOST\\Administrator")
+    password: str
+    use_https: bool = Field(default=True, description="WinRM over HTTPS (port 5986). Off uses HTTP on port 5985")
+    verify_ssl: bool = Field(
+        default=False,
+        description="Verify the WinRM TLS certificate when use_https is on",
+    )
+
+
 class OlvmLoginRequest(BaseModel):
     engine_url: str = Field(description="OLVM engine, for example https://olvm.example.com")
     username: str = Field(description="Engine user, for example admin@ovirt or admin@internal")
@@ -834,6 +866,7 @@ class SessionInfo(BaseModel):
     aws_region: str = ""
     aws_account_id: str = ""
     olvm_engine: str = ""  # set when the session is an OLVM engine login
+    hyperv_host: str = ""  # set when the session is a Hyper-V host login
     created_at: datetime
     expires_at: datetime
 

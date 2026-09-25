@@ -1,4 +1,4 @@
-"""Web UI sessions: opaque cookies with optional VMware, OLVM, Azure, GCP or AWS credentials.
+"""Web UI sessions: opaque cookies with optional VMware, OLVM, Hyper-V, Azure, GCP or AWS credentials.
 
 A session that started a migration is *pinned* by that job: logging out or idling past the
 TTL marks the session dead, but the underlying vCenter connection is only closed once the last
@@ -17,6 +17,7 @@ from typing import Optional
 from helper_app.aws.session import AwsSession
 from helper_app.azure.session import AzureSession
 from helper_app.gcp.session import GcpSession
+from helper_app.hyperv.session import HypervSession
 from helper_app.models import SessionInfo
 from helper_app.olvm.session import OlvmSession
 from helper_app.vsphere.session import VCenterSession
@@ -33,13 +34,15 @@ class UserSession:
 
     def __init__(self, token: str, vc: Optional[VCenterSession], ttl_s: float,
                  azure: Optional[AzureSession] = None, gcp: Optional[GcpSession] = None,
-                 aws: Optional[AwsSession] = None, olvm: Optional[OlvmSession] = None):
+                 aws: Optional[AwsSession] = None, olvm: Optional[OlvmSession] = None,
+                 hyperv: Optional[HypervSession] = None):
         self.token = token
         self.vc = vc
         self.azure = azure
         self.gcp = gcp
         self.aws = aws
         self.olvm = olvm
+        self.hyperv = hyperv
         if vc is not None:
             self.username = vc.username
         elif azure is not None:
@@ -50,6 +53,8 @@ class UserSession:
             self.username = aws.username
         elif olvm is not None:
             self.username = olvm.username
+        elif hyperv is not None:
+            self.username = hyperv.username
         else:
             self.username = ANONYMOUS_USER
         self.created_at = datetime.now(timezone.utc)
@@ -62,7 +67,8 @@ class UserSession:
 
     def cloud_backend(self, kind: str):
         """Return credentials for a supported cloud job, never an arbitrary session attribute."""
-        return {"azure": self.azure, "gcp": self.gcp, "aws": self.aws, "olvm": self.olvm}.get(kind)
+        return {"azure": self.azure, "gcp": self.gcp, "aws": self.aws, "olvm": self.olvm,
+                "hyperv": self.hyperv}.get(kind)
 
     # ------------------------------------------------------------- lifetime
     def touch(self) -> None:
@@ -88,7 +94,7 @@ class UserSession:
     @property
     def anonymous(self) -> bool:
         return (self.vc is None and self.azure is None and self.gcp is None and self.aws is None
-                and self.olvm is None)
+                and self.olvm is None and self.hyperv is None)
 
     def info(self) -> SessionInfo:
         if self.anonymous:
@@ -119,6 +125,9 @@ class UserSession:
                                created_at=self.created_at, expires_at=self.expires_at)
         if self.olvm is not None:
             return SessionInfo(username=self.username, olvm_engine=self.olvm.engine_host,
+                               created_at=self.created_at, expires_at=self.expires_at)
+        if self.hyperv is not None:
+            return SessionInfo(username=self.username, hyperv_host=self.hyperv.host,
                                created_at=self.created_at, expires_at=self.expires_at)
         return SessionInfo(username=self.username, vcenter_host=self.vc.host,
                            vcenter_port=getattr(self.vc, "port", 443), vcenter_version=self.vc.version,
@@ -161,6 +170,8 @@ class UserSession:
             self.aws.close()
         if self.olvm is not None:
             self.olvm.close()
+        if self.hyperv is not None:
+            self.hyperv.close()
 
 
 class SessionStore:
@@ -176,10 +187,11 @@ class SessionStore:
         gcp: Optional[GcpSession] = None,
         aws: Optional[AwsSession] = None,
         olvm: Optional[OlvmSession] = None,
+        hyperv: Optional[HypervSession] = None,
     ) -> UserSession:
-        """New session for a vCenter login, a cloud or OLVM login, or an anonymous one for the ISO flow."""
+        """New session for a vCenter login, a cloud, OLVM or Hyper-V login, or an anonymous one for the ISO flow."""
         token = secrets.token_urlsafe(32)
-        session = UserSession(token, vc, self.ttl_s, azure=azure, gcp=gcp, aws=aws, olvm=olvm)
+        session = UserSession(token, vc, self.ttl_s, azure=azure, gcp=gcp, aws=aws, olvm=olvm, hyperv=hyperv)
         with self._lock:
             self._sessions[token] = session
         log.info("session created for %s", session.username)

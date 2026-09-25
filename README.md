@@ -9,6 +9,7 @@ before migration; some guests need driver installation or manual configuration t
 **Migrate from**
 
 - **VMware** - vCenter or a standalone ESXi host
+- **Hyper-V** - a Hyper-V host (Hyper-V Manager)
 - **Oracle Linux Virtualization Manager** - OLVM (oVirt) engine
 - **Microsoft Azure**
 - **Amazon Web Services** - EC2 instances
@@ -23,7 +24,7 @@ before migration; some guests need driver installation or manual configuration t
 
 Linux guests support optional initramfs, DHCP network and cloud-agent fixes on the OCI copy. Windows
 guests may need VirtIO drivers installed before migration. Live migration with delta sync, VMware
-Workstation/Fusion, Hyper-V and unmanaged KVM (a host that is not OLVM) are not supported. See [docs/limitations.md](docs/limitations.md).
+Workstation/Fusion and unmanaged KVM (a host that is not OLVM) are not supported. See [docs/limitations.md](docs/limitations.md).
 
 ## Quick start
 
@@ -51,7 +52,8 @@ not isolate jobs by user. Configure a password on first use and restrict access 
 ## Networking
 
 The tool VM is meant to run in a private subnet without a public IP. Its subnet needs a route to OCI
-services (Service Gateway and/or NAT gateway), and, for VMware and OLVM sources, to vCenter/ESXi or the
+services (Service Gateway and/or NAT gateway), and, for VMware, Hyper-V and OLVM sources, to vCenter/ESXi,
+the Hyper-V host (WinRM and SMB) or the
 OLVM engine over your VPN/FastConnect; cloud sources are reached over the internet. Administrators reach the web UI on
 port 8443. The full list of flows and ports is in
 [docs/how-it-works.md](docs/how-it-works.md#networking).

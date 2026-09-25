@@ -18,6 +18,9 @@ dependencies = [
     "pyvmomi>=8.0",
     "asyncssh>=2.14",
     "pyjwt[crypto]>=2.8",
+    "pywinrm>=0.4",
+    "requests-ntlm>=1.2",
+    "smbprotocol>=1.13",
 ]
 
 [project.optional-dependencies]
