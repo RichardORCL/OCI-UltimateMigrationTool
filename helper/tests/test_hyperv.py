@@ -1,6 +1,7 @@
 """Hyper-V inventory mapping, preflight and VHD/VHDX reads, without the web API."""
 
 from helper_app.disk.vhd_image import open_image
+from helper_app.hyperv.client import HypervClient
 from helper_app.hyperv.inventory import (
     HypervVmDetails,
     firmware_of,
@@ -86,6 +87,22 @@ def test_dynamic_disks_skip_unallocated_blocks_and_a_differencing_chain_reads_th
     assert child.read(0, 4) == b"\x22\x22\x22\x22"
     assert child.read(512, 4) == b"\x11\x11\x11\x11"
     assert child.allocated() == [(0, block)]
+
+
+def test_stop_vm_targets_the_vm_object_because_stop_vm_has_no_id():
+    scripts: list[str] = []
+
+    def run(script: str) -> str:
+        scripts.append(script)
+        return "Off\n"
+
+    client = HypervClient("hv.test", "user", "secret", runner=run)
+    client.shutdown(WEB)
+    client.turn_off(WEB)
+    assert "Stop-VM -Id" not in scripts[0]
+    assert f"Get-VM -Id '{WEB}' | Stop-VM" in scripts[0]
+    assert "Stop-VM -Id" not in scripts[1]
+    assert "-TurnOff" in scripts[1]
 
 
 def test_shutdown_then_hard_turn_off():

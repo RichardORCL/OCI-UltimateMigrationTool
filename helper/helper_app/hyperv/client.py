@@ -266,11 +266,12 @@ class HypervClient:
 
     def shutdown(self, vm_id: str) -> None:
         self._check_id(vm_id)
-        self.run(f"# hyperv-action: shutdown\nStop-VM -Id '{vm_id}'\n")
+        # Stop-VM has -Name and -VM, not -Id. Get-VM is the cmdlet that accepts the GUID.
+        self.run(f"# hyperv-action: shutdown\nGet-VM -Id '{vm_id}' | Stop-VM\n")
 
     def turn_off(self, vm_id: str) -> None:
         self._check_id(vm_id)
-        self.run(f"# hyperv-action: turnoff\nStop-VM -Id '{vm_id}' -TurnOff\n")
+        self.run(f"# hyperv-action: turnoff\nGet-VM -Id '{vm_id}' | Stop-VM -TurnOff\n")
 
     def _inventory(self, vm_id: str) -> list[dict]:
         text = self.run(_INVENTORY.replace("ONLY_ID", vm_id))
