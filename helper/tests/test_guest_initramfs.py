@@ -27,7 +27,7 @@ class FakeShell:
     def __init__(self, layout: str = "lvm", boot_fstab="UUID=boot-uuid", virtio_in=(), tools_running=True,
                  lvm_foreign_vgs=("ocivolume",), dracut=True, dracut_rc=0, fail_mount=(), old_dracut=False,
                  udev_stale=False, lsblk_hides_lvs=False, blkid_fails=False, partial_virtio=(),
-                 modules_missing=(), builtin=(), os_release=None, scsi_no_sd=()):
+                 modules_missing=(), builtin=(), os_release=None, scsi_no_sd=(), lvm_already_active=False):
         self.layout = layout
         self.scsi_no_sd = set(scsi_no_sd)  # kernels whose initramfs has virtio_pci+virtio_scsi but no sd_mod
         self.partial_virtio = set(partial_virtio)  # kernels whose initramfs has virtio_blk/net but no virtio_scsi
@@ -45,6 +45,7 @@ class FakeShell:
         self.dracut_rc = dracut_rc
         self.fail_mount = set(fail_mount)
         self.old_dracut = old_dracut
+        self.lvm_already_active = lvm_already_active  # udev already created the guest device-mapper node
         self.calls: list[list[str]] = []
         self.active_vgs: list[str] = []
         self.mounted: dict[str, str] = {}  # mountpoint -> device
@@ -237,12 +238,21 @@ class FakeShell:
         if cmd == "vgchange":
             vg = argv[-1]
             if "-ay" in argv:
+                if self.lvm_already_active:
+                    if vg not in self.active_vgs:
+                        self.active_vgs.append(vg)
+                    return CmdResult(5, "", "device-mapper: create ioctl on ubuntu--vg-ubuntu--lv "
+                                     "failed: Device or resource busy")
                 self.active_vgs.append(vg)
             else:
                 self.active_vgs.remove(vg)
             return CmdResult(0, "", "")
         if cmd == "lvs":
-            assert "--config" in argv and argv[-1] in self.active_vgs
+            assert "--config" in argv
+            if "lv_active" in argv:
+                state = "active" if argv[-1] in self.active_vgs else ""
+                return CmdResult(0, f"  {state}\n" if state else "", "")
+            assert argv[-1] in self.active_vgs
             if self.layout == "ubuntu":
                 return CmdResult(0, "  /dev/mapper/ubuntu--vg-ubuntu--lv\n", "")
             if self.layout == "rhel_split_usr":
@@ -641,6 +651,14 @@ def test_ubuntu_layout_boot_by_disk_by_uuid_and_netplan(base):
     assert res.network.status == "done" and "netplan" in res.network.detail, res.network
     assert seen["netplan"] == ["00-installer-config.yaml", NETPLAN_FILE]
     assert shell.mounted == {} and shell.active_vgs == []
+
+    # udev on the helper already activated ubuntu-vg, so vgchange reports the device-mapper node busy.
+    # The logical volume is usable; the netplan drop-in is still written.
+    shell = FakeShell(layout="ubuntu", boot_fstab="/dev/disk/by-uuid/boot-uuid", lvm_already_active=True)
+    res = GuestFixer(run=shell, mount_base=base).fix("/dev/sdb", notify=msgs.append)
+    assert any("ubuntu-vg is already active" in m for m in msgs), msgs
+    assert res.network.status == "done" and "netplan" in res.network.detail, res.network
+    assert shell.active_vgs == []
 
     # /boot really not on this disk: initramfs step skipped with the reason, network step still runs
     shell = FakeShell(layout="ubuntu", boot_fstab="/dev/disk/by-uuid/elsewhere")

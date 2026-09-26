@@ -382,10 +382,28 @@ class _Session:
             raise Skip(f"guest volume group '{clash[0]}' has the same name as a volume group on the migration tool VM; "
                        "it cannot be activated here - rebuild the initramfs inside the guest instead")
         for vg in guest_vgs:
-            self.sh(["vgchange", "--config", self.lvm_config, "-ay", vg], timeout_s=120)
+            # The helper's udev rules activate a guest VG as soon as the disk appears. A second
+            # vgchange then fails to create the same device-mapper node ("Device or resource busy")
+            # even though the logical volumes are already usable.
+            r = self.sh(["vgchange", "--config", self.lvm_config, "-ay", vg], timeout_s=120, ok=False)
+            if r.returncode != 0 and not self.volume_group_is_active(vg):
+                self.sh(["udevadm", "settle"], timeout_s=30, ok=False)
+                r = self.sh(["vgchange", "--config", self.lvm_config, "-ay", vg], timeout_s=120, ok=False)
+            if r.returncode != 0 and not self.volume_group_is_active(vg):
+                detail = _tail(r.stderr or r.stdout)
+                raise Fail(f"vgchange --config {self.lvm_config} failed (rc {r.returncode}): {detail}")
+            if r.returncode != 0:
+                self.note(f"{vg} is already active")
             self.vgs.append(vg)
         self.sh(["udevadm", "settle"], timeout_s=30, ok=False)
         self.note(f"activated guest volume group(s) {', '.join(guest_vgs)}")
+
+    def volume_group_is_active(self, vg: str) -> bool:
+        r = self.sh(["lvs", "--config", self.lvm_config, "--noheadings", "-o", "lv_active", vg], ok=False)
+        if r.returncode != 0:
+            return False
+        states = [line.strip() for line in r.stdout.splitlines()]
+        return bool(states) and all(state == "active" for state in states)
 
     def add_logical_volumes(self, nodes: list[BlockNode]) -> list[BlockNode]:
         """lsblk may not show the LVs we just activated (or show them without a file system type when udev
