@@ -1140,6 +1140,7 @@
     const pageSizeSel = document.getElementById("vm-page-size");
     let vms = [];
     let page = 0;
+    let loading = true;
     const pageSize = () => Number(pageSizeSel.value) || 50;
     const osOf = (vm) => vm.guest_full_name || vm.guest_id || "(unknown)";
 
@@ -1160,6 +1161,7 @@
     };
 
     const render = () => {
+      if (loading) return;
       const filtered = vms.filter(matches);
       const size = pageSize(), pages = Math.max(1, Math.ceil(filtered.length / size));
       page = Math.min(page, pages - 1);
@@ -1200,16 +1202,28 @@
     };
     const resetPage = () => { page = 0; render(); };
 
+    const showLoading = () => {
+      err.textContent = "";
+      count.textContent = "Loading inventory...";
+      rows.replaceChildren(el("tr", {}, el("td", { colspan: 8, class: "muted" }, "Loading inventory...")));
+    };
     const load = async (refresh) => {
-      err.textContent = ""; count.textContent = "Loading inventory...";
+      loading = true;
+      showLoading();
       try {
         const [list, jobs] = await Promise.all([api("GET", (olvm ? "/olvm/vms" : hyperv ? "/hyperv/vms" : "/vms") + (refresh ? "?refresh=true" : "")), api("GET", "/jobs")]);
         vms = list;
         state.jobsByVm = {};
         for (const j of jobs) if (j.vm && !state.jobsByVm[j.vm.moid]) state.jobsByVm[j.vm.moid] = j; // jobs are newest first
+        loading = false;
         fillFilters();
         render();
-      } catch (e) { if (e.status !== 401) err.textContent = e.message; count.textContent = ""; }
+      } catch (e) {
+        loading = false;
+        if (e.status !== 401) err.textContent = e.message;
+        count.textContent = "";
+        rows.replaceChildren();
+      }
     };
     filter.addEventListener("input", resetPage);
     offOnly.addEventListener("change", resetPage);
