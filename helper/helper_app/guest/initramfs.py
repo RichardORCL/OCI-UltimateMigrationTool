@@ -382,28 +382,56 @@ class _Session:
             raise Skip(f"guest volume group '{clash[0]}' has the same name as a volume group on the migration tool VM; "
                        "it cannot be activated here - rebuild the initramfs inside the guest instead")
         for vg in guest_vgs:
-            # The helper's udev rules activate a guest VG as soon as the disk appears. A second
-            # vgchange then fails to create the same device-mapper node ("Device or resource busy")
-            # even though the logical volumes are already usable.
-            r = self.sh(["vgchange", "--config", self.lvm_config, "-ay", vg], timeout_s=120, ok=False)
-            if r.returncode != 0 and not self.volume_group_is_active(vg):
+            # udev on the helper activates a guest VG as soon as the disk appears. vgchange then
+            # fails to create the same device-mapper node ("Device or resource busy") and does not
+            # report the logical volume as active, even though /dev/mapper/<vg>-<lv> is already there.
+            result = self._vgchange_ay(vg)
+            detail = result.stderr or result.stdout
+            # "active" from lvs means the node is the live volume. Anything else with this error is a
+            # name or UUID left behind: drop it and create the logical volume again.
+            if result.returncode != 0 and not self._lvm_reports_active(vg):
+                self._remove_busy_nodes(detail)
                 self.sh(["udevadm", "settle"], timeout_s=30, ok=False)
-                r = self.sh(["vgchange", "--config", self.lvm_config, "-ay", vg], timeout_s=120, ok=False)
-            if r.returncode != 0 and not self.volume_group_is_active(vg):
-                detail = _tail(r.stderr or r.stdout)
-                raise Fail(f"vgchange --config {self.lvm_config} failed (rc {r.returncode}): {detail}")
-            if r.returncode != 0:
+                result = self._vgchange_ay(vg)
+                detail = result.stderr or result.stdout
+            if result.returncode != 0 and not self.volume_group_is_active(vg, detail):
+                raise Fail(f"vgchange --config {self.lvm_config} failed (rc {result.returncode}): {_tail(detail)}")
+            if result.returncode != 0:
                 self.note(f"{vg} is already active")
             self.vgs.append(vg)
         self.sh(["udevadm", "settle"], timeout_s=30, ok=False)
         self.note(f"activated guest volume group(s) {', '.join(guest_vgs)}")
 
-    def volume_group_is_active(self, vg: str) -> bool:
-        r = self.sh(["lvs", "--config", self.lvm_config, "--noheadings", "-o", "lv_active", vg], ok=False)
-        if r.returncode != 0:
-            return False
-        states = [line.strip() for line in r.stdout.splitlines()]
-        return bool(states) and all(state == "active" for state in states)
+    def _vgchange_ay(self, vg: str) -> CmdResult:
+        return self.sh(["vgchange", "--config", self.lvm_config, "-ay", vg], timeout_s=120, ok=False)
+
+    def _remove_busy_nodes(self, text: str) -> None:
+        names = re.findall(r"create ioctl on (\S+)", text or "")
+        for lvm_uuid in re.findall(r"\b(LVM-\S+)", text or ""):
+            info = self.sh(["dmsetup", "info", "-c", "--noheadings", "-o", "name", "-u", lvm_uuid], ok=False)
+            for line in info.stdout.splitlines():
+                found = line.strip()
+                if found and found not in names:
+                    names.append(found)
+        for name in names:
+            self.sh(["dmsetup", "remove", "-f", name], ok=False)
+
+    def _lvm_reports_active(self, vg: str) -> bool:
+        listed = self.sh(["lvs", "--config", self.lvm_config, "--noheadings", "-o", "lv_active", vg], ok=False)
+        return any("active" in line.split() for line in listed.stdout.splitlines())
+
+    def volume_group_is_active(self, vg: str, vgchange_output: str = "") -> bool:
+        """True when an LV in ``vg`` is active, or its device-mapper node already exists."""
+        listed = self.sh(["lvs", "--config", self.lvm_config, "--noheadings", "-o", "lv_active,lv_dm_path", vg],
+                         ok=False)
+        for line in listed.stdout.splitlines():
+            parts = line.split()
+            if "active" in parts:
+                return True
+            if any(part.startswith("/dev/") and os.path.exists(part) for part in parts):
+                return True
+        return any(os.path.exists(f"/dev/mapper/{name}")
+                   for name in re.findall(r"create ioctl on (\S+)", vgchange_output or ""))
 
     def add_logical_volumes(self, nodes: list[BlockNode]) -> list[BlockNode]:
         """lsblk may not show the LVs we just activated (or show them without a file system type when udev

@@ -27,7 +27,8 @@ class FakeShell:
     def __init__(self, layout: str = "lvm", boot_fstab="UUID=boot-uuid", virtio_in=(), tools_running=True,
                  lvm_foreign_vgs=("ocivolume",), dracut=True, dracut_rc=0, fail_mount=(), old_dracut=False,
                  udev_stale=False, lsblk_hides_lvs=False, blkid_fails=False, partial_virtio=(),
-                 modules_missing=(), builtin=(), os_release=None, scsi_no_sd=(), lvm_already_active=False):
+                 modules_missing=(), builtin=(), os_release=None, scsi_no_sd=(), lvm_already_active=False,
+                 lvm_mapper_node=False, lvm_stuck=False):
         self.layout = layout
         self.scsi_no_sd = set(scsi_no_sd)  # kernels whose initramfs has virtio_pci+virtio_scsi but no sd_mod
         self.partial_virtio = set(partial_virtio)  # kernels whose initramfs has virtio_blk/net but no virtio_scsi
@@ -46,6 +47,9 @@ class FakeShell:
         self.fail_mount = set(fail_mount)
         self.old_dracut = old_dracut
         self.lvm_already_active = lvm_already_active  # udev already created the guest device-mapper node
+        self.lvm_mapper_node = lvm_mapper_node  # node exists, but lvs does not say "active"
+        self.lvm_stuck = lvm_stuck  # name is busy and the node is not usable until dmsetup remove
+        self.stuck_cleared = False
         self.calls: list[list[str]] = []
         self.active_vgs: list[str] = []
         self.mounted: dict[str, str] = {}  # mountpoint -> device
@@ -235,21 +239,31 @@ class FakeShell:
                     return CmdResult(0, "", "")
                 return CmdResult(0, "  /dev/sdb2 rhel\n", "")
             return CmdResult(0, "".join(f"  /dev/sda3 {vg}\n" for vg in self.foreign), "")
+        if cmd == "dmsetup":
+            self.stuck_cleared = True
+            return CmdResult(0, "", "")
         if cmd == "vgchange":
             vg = argv[-1]
             if "-ay" in argv:
-                if self.lvm_already_active:
+                busy = CmdResult(5, "", "device-mapper: create ioctl on ubuntu--vg-ubuntu--lv "
+                                 "failed: Device or resource busy")
+                if self.lvm_stuck and not self.stuck_cleared:
+                    return busy
+                if self.lvm_already_active or self.lvm_mapper_node:
                     if vg not in self.active_vgs:
                         self.active_vgs.append(vg)
-                    return CmdResult(5, "", "device-mapper: create ioctl on ubuntu--vg-ubuntu--lv "
-                                     "failed: Device or resource busy")
+                    return busy
                 self.active_vgs.append(vg)
             else:
                 self.active_vgs.remove(vg)
             return CmdResult(0, "", "")
         if cmd == "lvs":
             assert "--config" in argv
-            if "lv_active" in argv:
+            if any("lv_active" in arg for arg in argv):
+                if self.lvm_mapper_node and argv[-1] in self.active_vgs:
+                    return CmdResult(5, "  /dev/mapper/ubuntu--vg-ubuntu--lv\n", "Device or resource busy")
+                if self.lvm_stuck and not self.stuck_cleared:
+                    return CmdResult(5, "", "Device or resource busy")
                 state = "active" if argv[-1] in self.active_vgs else ""
                 return CmdResult(0, f"  {state}\n" if state else "", "")
             assert argv[-1] in self.active_vgs
@@ -628,7 +642,7 @@ def test_both_steps_share_one_mount_session(base):
     assert res.initramfs.status == "skipped" and res.network.status == "skipped" and "LUKS" in res.network.detail
 
 
-def test_ubuntu_layout_boot_by_disk_by_uuid_and_netplan(base):
+def test_ubuntu_layout_boot_by_disk_by_uuid_and_netplan(base, monkeypatch):
     """What went wrong on the first Ubuntu migration: subiquity writes /boot as /dev/disk/by-uuid/<uuid> in
     fstab, which was not resolved, and that aborted the whole session - the netplan drop-in was never
     written.  Now /boot resolves, and a /boot problem only skips the initramfs step."""
@@ -658,6 +672,25 @@ def test_ubuntu_layout_boot_by_disk_by_uuid_and_netplan(base):
     res = GuestFixer(run=shell, mount_base=base).fix("/dev/sdb", notify=msgs.append)
     assert any("ubuntu-vg is already active" in m for m in msgs), msgs
     assert res.network.status == "done" and "netplan" in res.network.detail, res.network
+    assert shell.active_vgs == []
+
+    # The name is reserved and the node is not usable. Remove it and activate again.
+    shell = FakeShell(layout="ubuntu", boot_fstab="/dev/disk/by-uuid/boot-uuid", lvm_stuck=True)
+    res = GuestFixer(run=shell, mount_base=base).fix("/dev/sdb", notify=msgs.append)
+    assert any(c[:4] == ["dmsetup", "remove", "-f", "ubuntu--vg-ubuntu--lv"] for c in shell.calls)
+    assert res.network.status == "done" and "netplan" in res.network.detail, res.network
+    assert shell.active_vgs == []
+
+    # Same busy error, and lvs does not say the LV is active. The leftover node is removed; if it
+    # is still there afterwards the volume is usable and the netplan drop-in is written.
+    import helper_app.guest.initramfs as guest_initramfs
+    real_exists = guest_initramfs.os.path.exists
+    monkeypatch.setattr(guest_initramfs.os.path, "exists",
+                        lambda path: path == "/dev/mapper/ubuntu--vg-ubuntu--lv" or real_exists(path))
+    shell = FakeShell(layout="ubuntu", boot_fstab="/dev/disk/by-uuid/boot-uuid", lvm_mapper_node=True)
+    res = GuestFixer(run=shell, mount_base=base).fix("/dev/sdb", notify=msgs.append)
+    assert res.network.status == "done" and "netplan" in res.network.detail, res.network
+    assert any(c[0] == "dmsetup" and "ubuntu--vg-ubuntu--lv" in c for c in shell.calls)
     assert shell.active_vgs == []
 
     # /boot really not on this disk: initramfs step skipped with the reason, network step still runs
