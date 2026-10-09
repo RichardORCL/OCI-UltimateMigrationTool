@@ -12,10 +12,6 @@ packages:
   - attr # setfattr: SELinux labels for the network files written into the guest (fallback to its setfiles)
   - python3.11
   - python3.11-pip
-  - xorriso # Proxmox ISO preparation: keep the boot records while replacing the installer initrd
-  - cpio
-  - gzip
-  - zstd
 
 write_files:
   - path: /etc/vc-oci-helper/helper.env

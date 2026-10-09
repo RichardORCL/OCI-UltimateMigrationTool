@@ -403,25 +403,17 @@ Pick an installer ISO in an Object Storage bucket, an OS type, firmware (BIOS/UE
 (x86 or Ampere A1/A2/A4 flex VM with OCPUs and memory, or a bare metal shape) and a boot volume size. The
 tool (`oci/iso_install.py`):
 
-1. optionally, when *Prepare Proxmox installer on the migration tool VM* is checked, downloads the ISO
-   onto the tool VM and inspects `/boot/initrd.img` (`oci/proxmox_iso.py`). A Proxmox installer whose
-   init script only accepts a removable, ISO9660 or small disk is rewritten so it also scans virtio
-   disks and partitions (the way OCI presents the boot media; this is the `no device with valid ISO found`
-   failure). The new object is uploaded beside the original as `name.oci-umt.iso` and is what the next
-   step imports. The original object is not changed. An ISO that is not a Proxmox installer stops the job
-   with what the inspection found. `xorriso`, `cpio`, `gzip` and `zstd` are installed on the VM when they
-   are missing;
-2. imports the ISO as a **custom image** (source image type `VMDK`; OCI recognises ISO content and treats
+1. imports the ISO as a **custom image** (source image type `VMDK`; OCI recognises ISO content and treats
    the image as boot media). Images are tagged with the ISO object, its ETag, firmware and device model
    and reused by later jobs from the same ISO;
-3. launches the instance from that image with a **blank boot volume** of the requested size and the right
+2. launches the instance from that image with a **blank boot volume** of the requested size and the right
    launch options (paravirtualized devices by default, IDE + E1000 with *Maximum compatibility* for
    installers without virtio drivers, e.g. Windows Setup);
-4. leaves the job in *INSTALLING* and hands you the [remote console](#oci-remote-console). Install the
+3. leaves the job in *INSTALLING* and hands you the [remote console](#oci-remote-console). Install the
    operating system onto the boot volume and reboot; the instance then boots from the boot volume. *Installation
    finished* completes the job.
 
-Without that checkbox, nothing is copied by the tool VM.
+Nothing is copied by the tool VM in this flow.
 
 ## OCI Remote Console
 

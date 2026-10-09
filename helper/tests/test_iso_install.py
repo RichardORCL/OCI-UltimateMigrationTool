@@ -109,53 +109,6 @@ def test_image_tags_identify_object_firmware_and_device_model():
 
 
 # --------------------------------------------------------------------------- run
-def test_run_prepares_a_proxmox_iso_on_the_helper_before_import(env):
-    settings, fake, store, installer = env
-    seen: dict[str, str] = {}
-
-    def fake_fix(clients, iso, on_progress, check_cancel):
-        if check_cancel:
-            check_cancel()
-        seen["source"] = iso.object_name
-        on_progress(40, "Inspecting the installer initrd")
-        clients.object_storage.add_object(iso.bucket, "images/proxmox-ve_9.2-1.oci-umt.iso", size=100, etag="etag-fixed")
-        return iso.model_copy(update={
-            "source_object_name": iso.object_name,
-            "object_name": "images/proxmox-ve_9.2-1.oci-umt.iso",
-            "etag": "etag-fixed",
-            "size_bytes": 100,
-            "proxmox_fix_note": "Proxmox VE 9.2-1: rewrote the initrd",
-        })
-
-    installer.media_fix = fake_fix
-    job = make_job(make_iso(object_name="images/proxmox-ve_9.2-1.iso", etag="etag-pve", fix_proxmox_media=True),
-                   make_target(display_name="pve"))
-    store.put(job)
-    installer.run(job)
-
-    assert seen["source"] == "images/proxmox-ve_9.2-1.iso"
-    assert job.iso is not None and job.iso.object_name == "images/proxmox-ve_9.2-1.oci-umt.iso"
-    assert job.iso.source_object_name == "images/proxmox-ve_9.2-1.iso"
-    assert job.iso.proxmox_fix_note.startswith("Proxmox VE 9.2-1")
-    img = fake.compute.images[job.iso_image_id]
-    assert img.object_name == "images/proxmox-ve_9.2-1.oci-umt.iso"
-    assert job.phase == JobPhase.INSTALLING
-
-
-def test_run_stops_before_import_when_the_iso_is_not_proxmox(env):
-    settings, fake, store, installer = env
-
-    def fake_fix(clients, iso, on_progress, check_cancel):
-        raise OciError("the ISO is not a Proxmox installer")
-
-    installer.media_fix = fake_fix
-    job = make_job(make_iso(fix_proxmox_media=True), make_target())
-    store.put(job)
-    with pytest.raises(OciError, match="not a Proxmox installer"):
-        installer.run(job)
-    assert job.iso_image_id is None and fake.compute.launch_details == []
-
-
 def test_run_imports_iso_launches_with_blank_boot_volume_and_hands_over(env):
     settings, fake, store, installer = env
     job = make_job(make_iso(), make_target())

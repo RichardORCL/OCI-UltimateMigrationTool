@@ -297,13 +297,6 @@ class IsoSpec(BaseModel):
     secure_boot: bool = False  # UEFI only: launch a shielded instance
     boot_disk_gb: int = Field(default=50, ge=50, le=32768,
                               description="Size of the blank boot volume the OS is installed onto")
-    fix_proxmox_media: bool = Field(
-        default=False,
-        description="On the migration tool VM, inspect the ISO. A Proxmox installer that cannot see its own "
-                    "media is rewritten and uploaded beside the original; that copy is what gets imported",
-    )
-    source_object_name: str = ""  # the object the user picked, once a rewritten copy is what gets imported
-    proxmox_fix_note: str = ""  # what the inspection / rewrite did, shown on the job page
 
     @property
     def key(self) -> str:

@@ -668,17 +668,6 @@ class FakeObjectStorage:
             summaries.append(s)
         return Resp(ListObjects(objects=summaries, prefixes=[], next_start_with=None))
 
-    def head_object(self, namespace, bucket_name, object_name, **kw):
-        body = self.bucket_objects.get(bucket_name, {}).get(object_name)
-        if body is None and bucket_name == "oci-umt-seed":
-            body = self.objects.get(object_name)
-        if body is not None:
-            return Resp(None, headers={"etag": f"etag-{object_name}", "content-length": str(len(body))})
-        src = self.iso_objects.get(bucket_name, {}).get(object_name)
-        if src is not None:
-            return Resp(None, headers={"etag": src.etag, "content-length": str(src.size)})
-        raise service_error(404, "ObjectNotFound", f"object {object_name} not found", "HeadObject")
-
     def get_object(self, namespace, bucket_name, object_name, **kw):
         if bucket_name not in self.buckets:
             raise service_error(404, "BucketNotFound", f"bucket {bucket_name} not found", "GetObject")
