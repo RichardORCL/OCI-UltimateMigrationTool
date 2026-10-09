@@ -132,7 +132,8 @@ class MigrationRunner:
         return self.pool.submit(self._run_safely, job_id)
 
     def submit_iso(self, job_id: str) -> Future:
-        """Start an ISO job: no vCenter session and no copy slot (the helper moves no data for it)."""
+        """Start an ISO job: no vCenter session and no copy slot.  Proxmox media preparation downloads
+        the ISO onto this VM, but that stays inside the job rather than taking a migration slot."""
         with self._lock:
             self._running.add(job_id)
         return self.pool.submit(self._run_iso_safely, job_id)

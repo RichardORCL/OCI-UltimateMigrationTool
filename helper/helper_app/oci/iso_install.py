@@ -4,8 +4,10 @@ The ISO in Object Storage is imported as a custom image with source image type `
 disk images; OCI recognises ISO content and treats the image as boot media, which is not documented but
 works).  An instance launched from such an image boots the ISO as installation media and gets a
 blank boot volume of the requested size to install onto; after the installation the instance boots from
-the boot volume.  Nothing is copied by the helper: the job ends in ``INSTALLING`` and hands the user the
-remote console to run the installer; *Installation finished* completes the job.
+the boot volume.  The job ends in ``INSTALLING`` and hands the user the remote console to run the
+installer; *Installation finished* completes the job.  With *Prepare Proxmox installer* the helper VM
+first downloads the ISO, rewrites the installer initrd so it can see the virtio disk OCI presents, and
+uploads that copy beside the original.
 
 ISO images are reused across jobs: they are tagged with the ISO object (and its ETag), the firmware and
 the device model, so a second instance from the same ISO skips the import.
@@ -53,12 +55,14 @@ from helper_app.oci.image_import import (
     wait_import,
 )
 from helper_app.oci.launch import free_hostname_label, secure_boot_platform_config
+from helper_app.oci.proxmox_iso import apply_proxmox_media_fix
 from helper_app.oci.mapping import WINDOWS_CLIENT_VERSIONS, is_bare_metal_shape, remote_data_volume_type_for
 
 log = logging.getLogger(__name__)
 
 TAG_VALUE_MAX = 256
 
+STEP_ISO_MEDIA = "iso_media"
 STEP_ISO_IMAGE = "iso_image"
 STEP_LAUNCH = "launch_instance"
 
@@ -118,10 +122,12 @@ def _display_name(iso: IsoSpec, lo: LaunchOptionsSpec) -> str:
 class IsoInstaller:
     """The steps of an ISO job: find/import the image, launch the instance, wait for the user."""
 
-    def __init__(self, clients: OciClients, settings: Settings, save: Callable[[Job], Job]):
+    def __init__(self, clients: OciClients, settings: Settings, save: Callable[[Job], Job],
+                 media_fix: Callable[..., IsoSpec] | None = None):
         self.c = clients
         self.s = settings
         self.save = save
+        self.media_fix = media_fix or apply_proxmox_media_fix
 
     @property
     def image_compartment(self) -> str:
@@ -169,6 +175,18 @@ class IsoInstaller:
         # Secure Boot -> shielded instance; decided first so an unsuitable shape fails before anything exists
         platform_config = (secure_boot_platform_config(shape, iso.is_windows, what="Secure Boot was requested")
                            if lo.secure_boot else None)
+
+        # 0. optional: on this VM, rewrite a Proxmox installer that cannot see the disk OCI boots
+        if iso.fix_proxmox_media and not iso.proxmox_fix_note:
+            self._step(job, STEP_ISO_MEDIA, f"Inspecting {iso.object_name} on the migration tool VM", check_cancel)
+            iso = self.media_fix(
+                self.c, iso,
+                on_progress=lambda pct, text: self._step_progress(job, pct, text, check_cancel),
+                check_cancel=check_cancel,
+            )
+            job.iso = iso
+            job.step_percent = None
+            self.save(job)
 
         # 1. custom image from the ISO
         if not job.iso_image_id:

@@ -168,6 +168,11 @@
             </span>
             <small id="iso-hint">Only objects ending in <code>.iso</code> are listed.</small>
           </label>
+          <label class="check"><input type="checkbox" name="fix_proxmox_media"> Prepare Proxmox installer on the migration tool VM</label>
+          <small>Inspects the ISO on this VM. A Proxmox installer that stops with <em>no device with valid ISO found</em>
+            (it ignores the large virtio disk OCI boots, and partitions) is rewritten and uploaded next to the original
+            as a <code>.oci-umt.iso</code>. The instance boots that copy. The original object is left as it is.
+            Any other ISO stops the job and reports what the inspection found.</small>
           <label>Operating system
             <select name="operating_system" required></select>
             <small>Recorded on the OCI image (OS-specific defaults in OCI); pick the closest match for the installer.</small>

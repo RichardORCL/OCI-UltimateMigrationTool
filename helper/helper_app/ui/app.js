@@ -284,7 +284,7 @@
   const gcpZone = (id) => { const m = /\/zones\/([^/]+)\/instances\//i.exec(id || ""); return m ? m[1] : ""; };
   // Azure resource IDs are lower-cased by the API; the resource group is the fourth path element
   const azureResourceGroup = (id) => { const m = /\/resourcegroups\/([^/]+)/i.exec(id || ""); return m ? m[1] : ""; };
-  const STEP_LABELS = { seed_image: "Seed image import", iso_image: "ISO image import", launch_instance: "Instance launch" };
+  const STEP_LABELS = { seed_image: "Seed image import", iso_media: "Proxmox ISO preparation", iso_image: "ISO image import", launch_instance: "Instance launch" };
   // OCI console deep link for an instance OCID; the region query parameter makes the console switch to
   // the helper's region instead of the user's last one
   const consoleUrl = (kind, ocid) => `https://cloud.oracle.com/compute/${kind}/${encodeURIComponent(ocid)}${state.region ? `?region=${encodeURIComponent(state.region)}` : ""}`;
@@ -798,6 +798,8 @@
       ["Disks", `${job.disks.length} (${job.disks.filter((d) => d.is_boot).length} boot via image)`],
     ] : iso ? [
       ["Source ISO", `${job.iso.bucket}/${job.iso.object_name}${job.iso.size_bytes ? ` (${fmtBytes(job.iso.size_bytes)})` : ""}`],
+      ...(job.iso.source_object_name ? [["Original ISO", `${job.iso.bucket}/${job.iso.source_object_name}`]] : []),
+      ...(job.iso.fix_proxmox_media ? [["Proxmox media", job.iso.proxmox_fix_note || "prepared on the migration tool VM before import"]] : []),
       ["Operating system", `${job.iso.operating_system} ${job.iso.operating_system_version}`],
       ["Boot volume", `${job.iso.boot_disk_gb} GB (blank; the OS is installed onto it), ${job.target.volume_vpus_per_gb} VPU/GB`],
     ] : azure ? [
@@ -2116,6 +2118,7 @@
           firmware: isel("firmware").value,
           secure_boot: secure.checked,
           boot_disk_gb: Number(isel("boot_disk_gb").value),
+          fix_proxmox_media: isel("fix_proxmox_media").checked,
         },
         target: {
           compartment_id: fd.get("compartment_id"),
