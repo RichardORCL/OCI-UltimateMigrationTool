@@ -61,8 +61,11 @@ def test_patch_scans_virtio_disks_and_partitions_and_keeps_the_retry_loop():
     assert MARKER in patched
     assert "/sys/block/vd*" in patched and "/sys/block/mmcblk*" in patched
     assert "1024 * 1024 * 65" not in patched  # the size filter is gone
-    assert 'testing device \'$devpath\' for ISO' in patched
-    assert "[ -b \"$devpath\" ]" in patched
+    assert "testing device '$oci_dev' for ISO" in patched
+    assert '[ -b "$oci_dev" ]' in patched
+    # bare-metal NVMe is larger than the ISO; Proxmox's session starts 32 KiB in
+    assert "mount -t iso9660 -o ro" in patched
+    assert "offset=32768" in patched
     # the outer retry, and the break once a disk matched, stay around the replaced loop
     assert "for try in $(seq 1 9)" in patched
     assert 'if test -n "$cdrom"' in patched

@@ -208,32 +208,46 @@ def _matching_done(text: str, pos: int) -> int | None:
 
 
 def _replacement_loop(indent: str) -> str:
-    i1, i2, i3 = indent + "\t", indent + "\t\t", indent + "\t\t\t"
-    i4 = indent + "\t\t\t\t"
-    return (
-        f"{indent}# {MARKER}: scan virtio, xen and mmc disks and their partitions.\n"
-        f"{indent}# Large and non-removable media are included; OCI presents the ISO that way.\n"
-        f"{indent}for i in /sys/block/hd* /sys/block/sr* /sys/block/scd* /sys/block/sd* "
-        f"/sys/block/nvme* /sys/block/vd* /sys/block/xvd* /sys/block/mmcblk*; do\n"
-        f"{i1}if [ -d \"$i\" ]; then\n"
-        f"{i2}basedev=\"${{i##*/}}\"\n"
-        f"{i2}for devpath in \"/dev/$basedev\" /dev/${{basedev}}[0-9] /dev/${{basedev}}[0-9][0-9] "
-        f"/dev/${{basedev}}p[0-9] /dev/${{basedev}}p[0-9][0-9]; do\n"
-        f"{i3}[ -b \"$devpath\" ] || continue\n"
-        f"{i3}echo \"testing device '$devpath' for ISO\"\n"
-        f"{i3}if mount -t auto -o ro \"$devpath\" /mnt >/dev/null 2>&1; then\n"
-        f"{i4}if [ -r \"/mnt/$CDID_FN\" ] && [ \"X$(cat \"/mnt/$CDID_FN\")\" = \"X$reqid\" ]; then\n"
-        f"{i4}\techo \"found $PRODUCTLONG ISO\"\n"
-        f"{i4}\tcdrom=$devpath\n"
-        f"{i4}\tbreak\n"
-        f"{i4}fi\n"
-        f"{i4}umount /mnt || true\n"
-        f"{i3}fi\n"
-        f"{i2}done\n"
-        f"{i2}[ -n \"$cdrom\" ] && break\n"
-        f"{i1}fi\n"
-        f"{indent}done\n"
-    )
+    # OCI bare metal stores the ISO at the start of a much larger NVMe disk. Proxmox builds that
+    # ISO with a 16-sector partition offset, so `mount -t auto /dev/nvme0n1` never sees it.
+    body = r"""# MARKER_PLACEHOLDER: mount the ISO9660 session on a large NVMe or virtio disk.
+oci_umt_try() {
+	oci_dev=$1
+	[ -b "$oci_dev" ] || return 1
+	echo "testing device '$oci_dev' for ISO"
+	oci_mounted=
+	if mount -t iso9660 -o ro "$oci_dev" /mnt >/dev/null 2>&1; then
+		oci_mounted=1
+	elif mount -t iso9660 -o ro,loop,offset=32768 "$oci_dev" /mnt >/dev/null 2>&1; then
+		oci_mounted=1
+	elif mount -t auto -o ro "$oci_dev" /mnt >/dev/null 2>&1; then
+		oci_mounted=1
+	fi
+	if [ -n "$oci_mounted" ]; then
+		if [ -r "/mnt/$CDID_FN" ] && [ "X$(cat "/mnt/$CDID_FN")" = "X$reqid" ]; then
+			echo "found $PRODUCTLONG ISO"
+			cdrom=$oci_dev
+			return 0
+		fi
+		umount /mnt >/dev/null 2>&1 || true
+	fi
+	return 1
+}
+for i in /sys/block/hd* /sys/block/sr* /sys/block/scd* /sys/block/sd* /sys/block/nvme* /sys/block/vd* /sys/block/xvd* /sys/block/mmcblk*; do
+	if [ -d "$i" ]; then
+		basedev="${i##*/}"
+		oci_umt_try "/dev/$basedev" && break
+		for part in "$i"/${basedev}*; do
+			[ -d "$part" ] || continue
+			oci_umt_try "/dev/${part##*/}" && break
+		done
+		[ -n "$cdrom" ] && break
+	fi
+done
+"""
+    body = body.replace("MARKER_PLACEHOLDER", MARKER)
+    lines = [(indent + line) if line else line for line in body.splitlines()]
+    return "\n".join(lines) + "\n"
 
 
 # --------------------------------------------------------------------------- ISO file on the helper VM
