@@ -323,6 +323,42 @@ def _extract_initrd(iso: Path, dest: Path) -> None:
         raise ProxmoxIsoError("the ISO has no /boot/initrd.img")
 
 
+def parse_volume_date_uuid(report: str) -> str:
+    """The ``-volume_date uuid`` value from ``xorriso -report_system_area cmd``.
+
+    Proxmox's own ISO prep keeps this timestamp. Rebuilding the boot records instead
+    (``-boot_image any replay``) makes GPT partitions 1 and 2 overlap on a PVE 9 image.
+    """
+    for line in report.splitlines():
+        if line.startswith("-volume_date uuid"):
+            uuid = line.split()[-1].strip().strip("'\"")
+            if uuid:
+                return uuid
+    raise ProxmoxIsoError("the ISO has no volume date UUID, so its boot partitions cannot be kept")
+
+
+def _iso_volume_uuid(iso: Path) -> str:
+    proc = _run(["xorriso", "-indev", str(iso), "-report_system_area", "cmd"])
+    return parse_volume_date_uuid(proc.stdout)
+
+
+def _write_fixed_iso(src: Path, dst: Path, initrd: Path) -> None:
+    """Copy ``src`` and replace ``/boot/initrd.img`` without rebuilding the GPT.
+
+    Same approach as ``proxmox-auto-install-assistant``: ``-boot_image any keep`` plus the
+    original volume-date UUID, so GRUB still finds its partition.
+    """
+    uuid = _iso_volume_uuid(src)
+    shutil.copyfile(src, dst)
+    _run([
+        "xorriso",
+        "-boot_image", "any", "keep",
+        "-volume_date", "uuid", uuid,
+        "-dev", str(dst),
+        "-map", str(initrd), "/boot/initrd.img",
+    ])
+
+
 def _prepare_local(src: Path, dst: Path, work: Path) -> tuple[dict[str, str], InitScan, Path | None]:
     """Inspect ``src`` and, when the init script needs it, write a rewritten ISO to ``dst``.
 
@@ -347,11 +383,7 @@ def _prepare_local(src: Path, dst: Path, work: Path) -> tuple[dict[str, str], In
     _pack_initrd(tree, packed)
     if dst.exists():
         dst.unlink()
-    _run([
-        "xorriso", "-indev", str(src), "-outdev", str(dst),
-        "-boot_image", "any", "replay",
-        "-map", str(packed), "/boot/initrd.img",
-    ])
+    _write_fixed_iso(src, dst, packed)
     return info, scan, dst
 
 

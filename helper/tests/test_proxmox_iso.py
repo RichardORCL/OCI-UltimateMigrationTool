@@ -9,6 +9,7 @@ from helper_app.oci.proxmox_iso import (
     ProxmoxIsoError,
     fixed_object_name,
     inspect_init_script,
+    parse_volume_date_uuid,
     patch_init_script,
     product_label,
     read_cd_info,
@@ -88,6 +89,17 @@ def test_a_proxmox_init_with_an_unknown_scan_is_refused():
 def test_fixed_object_name_sits_beside_the_original():
     assert fixed_object_name("images/proxmox-ve_9.2-1.iso") == "images/proxmox-ve_9.2-1.oci-umt.iso"
     assert fixed_object_name("images/proxmox-ve_9.2-1.oci-umt.iso") == "images/proxmox-ve_9.2-1.oci-umt.iso"
+
+
+def test_volume_date_uuid_is_taken_from_the_xorriso_report():
+    report = "\n".join([
+        "-volid 'PVE'",
+        "-volume_date uuid '2026031812000000'",
+        "-boot_image any replay",
+    ])
+    assert parse_volume_date_uuid(report) == "2026031812000000"
+    with pytest.raises(ProxmoxIsoError, match="volume date UUID"):
+        parse_volume_date_uuid("-volid 'PVE'\n")
 
 
 def test_cd_info_label():
