@@ -58,7 +58,7 @@ from helper_app.oci.mapping import (
     os_version_choices,
     resolve_target_os,
 )
-from helper_app.oci.options import PrivateIpError, check_private_ip, primary_vnic_ips
+from helper_app.oci.options import IMPORT_DISK_SUFFIXES, PrivateIpError, check_private_ip, primary_vnic_ips
 from helper_app.sessions import UserSession
 
 log = logging.getLogger(__name__)
@@ -470,8 +470,11 @@ async def create_ova_job(body: CreateOvaJobRequest, request: Request,
     st = request.app.state
     ova, target = body.ova, body.target
     low = ova.object_name.lower()
-    if not (low.endswith(".ova") or low.endswith(".ovf") or low.endswith(".vmdk")):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"{ova.object_name} must be an .ova, .ovf, or .vmdk object")
+    if not low.endswith(IMPORT_DISK_SUFFIXES):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"{ova.object_name} must be an .ova, .ovf, .vmdk, .qcow, or .qcow2 object",
+        )
     if not (target.display_name or "").strip():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "an instance name is required")
     os_ver = _require_catalog_os_version(ova.operating_system, ova.operating_system_version)

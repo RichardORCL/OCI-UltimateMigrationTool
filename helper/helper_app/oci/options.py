@@ -208,8 +208,11 @@ def list_buckets(c: OciClients, compartment_id: str) -> list[OciBucket]:
     )
 
 
+IMPORT_DISK_SUFFIXES = (".ova", ".ovf", ".vmdk", ".qcow", ".qcow2")
+
+
 def list_ova_objects(c: OciClients, bucket: str, prefix: Optional[str] = None) -> list[OciObject]:
-    """``.ova``, ``.ovf``, and ``.vmdk`` objects in a bucket (OVA import picker)."""
+    """``.ova``, ``.ovf``, ``.vmdk``, and qcow2 objects in a bucket (OVA import picker)."""
     namespace = object_storage_namespace(c)
     kwargs = dict(namespace_name=namespace, bucket_name=bucket, fields="name,size,etag,timeModified")
     if prefix:
@@ -224,7 +227,7 @@ def list_ova_objects(c: OciClients, bucket: str, prefix: Optional[str] = None) -
             time_modified=getattr(o, "time_modified", None),
         )
         for o in objects
-        if o.name.lower().endswith((".ova", ".vmdk", ".ovf"))
+        if o.name.lower().endswith(IMPORT_DISK_SUFFIXES)
     ]
     return sorted(result, key=lambda o: o.name.lower())
 

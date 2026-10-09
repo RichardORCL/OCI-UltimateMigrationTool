@@ -678,6 +678,18 @@ class FakeObjectStorage:
             raise service_error(404, "ObjectNotFound", f"object {object_name} not found", "GetObject")
         import io
 
+        rng = kw.get("range")
+        if rng:
+            try:
+                spec = str(rng).split("=", 1)[1]
+                start_s, end_s = spec.split("-", 1)
+                start = int(start_s) if start_s else 0
+                end = int(end_s) if end_s else len(body) - 1
+            except (IndexError, ValueError):
+                raise service_error(400, "InvalidParameter", f"bad range {rng}", "GetObject")
+            if start < 0 or end < start:
+                raise service_error(416, "InvalidRange", f"bad range {rng}", "GetObject")
+            body = body[start:end + 1]
         stream = io.BytesIO(body)
         return Resp(NS(content=stream, raw=NS(stream=stream)))
 

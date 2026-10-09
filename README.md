@@ -14,7 +14,7 @@ before migration; some guests need driver installation or manual configuration t
 - **Microsoft Azure**
 - **Amazon Web Services** - EC2 instances
 - **Google Cloud** - Compute Engine VMs
-- **Manual import** - an OVA/OVF (or VMDK) uploaded to OCI Object Storage
+- **Manual import** - an OVA/OVF, VMDK, or QCOW2 uploaded to OCI Object Storage
 
 **Extra features**
 

@@ -94,7 +94,7 @@
         </a>
         <a class="card start-choice" href="#/ova" id="start-ova">
           <h3>Import OVA from Object Storage</h3>
-          <p>Upload or pick an OVA (or VMDK) in a bucket; the migration tool imports the boot disk as a custom image,
+          <p>Upload or pick an OVA, VMDK, or QCOW2 in a bucket; the migration tool imports the boot disk as a custom image,
             copies any additional disks, and launches the instance in OCI.</p>
           <span class="button primary">Import OVA</span>
         </a>
@@ -300,7 +300,7 @@
           <a href="#/start" class="muted">&larr; back to start</a>
         </div>
         <p class="muted">Select an <code>.ova</code>, a standalone <code>.ovf</code> (with its <code>.vmdk</code> files in the same
-          bucket folder), or a boot <code>.vmdk</code>, or upload files to the bucket. The boot disk is imported as a custom image;
+          bucket folder), a boot <code>.vmdk</code>, or a <code>.qcow2</code> disk, or upload files to the bucket. The boot disk is imported as a custom image;
           additional disks are copied onto block volumes before the instance is launched.</p>
         <form id="ova-form" class="form" autocomplete="off">
           <label>Bucket compartment
@@ -310,17 +310,17 @@
             <select name="bucket" required></select>
             <small id="ova-bucket-hint"></small>
           </label>
-          <label>OVA file
+          <label>Disk image
             <span class="input-row">
               <select name="object_name" required multiple size="4"></select>
               <button type="button" id="ova-refresh" class="button secondary">Refresh</button>
               <button type="button" id="ova-load" class="button secondary" title="Read the OVF descriptor and suggest OS, size, and firmware">Load OVF</button>
             </span>
-            <small id="ova-hint">Select one .ova or .ovf and click Load OVF, or hold Ctrl for multiple imports.</small>
+            <small id="ova-hint">Select one .ova or .ovf and click Load OVF, or hold Ctrl for multiple imports. A .qcow2 has no OVF; set the OS and firmware yourself.</small>
             <small id="ova-load-state" class="muted"></small>
           </label>
-          <label>Upload OVA or VMDK
-            <input type="file" id="ova-upload" accept=".ova,.ovf,.vmdk" multiple>
+          <label>Upload OVA, VMDK, or QCOW2
+            <input type="file" id="ova-upload" accept=".ova,.ovf,.vmdk,.qcow,.qcow2" multiple>
             <small id="ova-upload-state" class="muted"></small>
           </label>
           <label>Operating system

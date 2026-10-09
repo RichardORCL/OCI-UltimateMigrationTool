@@ -60,7 +60,7 @@ async def oci_objects(request: Request, bucket: str, prefix: Optional[str] = Non
 
 @router.get("/oci/ova-objects", response_model=list[OciObject])
 async def oci_ova_objects(request: Request, bucket: str, prefix: Optional[str] = None):
-    """``.ova`` / ``.vmdk`` objects in a bucket."""
+    """``.ova``, ``.ovf``, ``.vmdk``, and qcow2 objects in a bucket."""
     st = request.app.state
     try:
         return await asyncio.to_thread(list_ova_objects, st.clients, bucket, prefix)

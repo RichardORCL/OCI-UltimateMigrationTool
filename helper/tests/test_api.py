@@ -1485,6 +1485,41 @@ def test_ova_job_import_and_launch(env):
     assert "kind=ova" in diag and "test.ova" in diag
 
 
+def test_qcow2_job_copies_allocated_clusters(env):
+    from .test_qcow import build_qcow2
+
+    blob, guest = build_qcow2()
+    os_ = env.fake.object_storage
+    os_.add_bucket("OVA")
+    os_.bucket_objects.setdefault("OVA", {})["disk.qcow2"] = blob
+    os_.add_object("OVA", "disk.qcow2", size=len(blob), etag="qcow-etag")
+    anonymous(env.client)
+    r = env.client.post("/api/jobs/ova", json={
+        "ova": ova_spec(object_name="disk.qcow2", etag="qcow-etag"),
+        "target": iso_target(display_name="from-qcow"),
+    })
+    assert r.status_code == 202, r.text
+    job = wait_phase(env.client, r.json()["id"], "COMPLETED", "FAILED", timeout=60)
+    assert job["phase"] == "COMPLETED", job
+    assert job["disks"][0]["status"] == "COPIED"
+    assert job["disks"][0]["bytes_written"] == 1024
+    # the helper detaches the volume before the job is finished, which clears disk.device;
+    # the fake disk file is the next sd* under the test device directory
+    assert (Path(env.settings.device_prefix).parent / "sdb").read_bytes() == guest
+    listed = env.client.get("/api/oci/ova-objects", params={"bucket": "OVA"}).json()
+    assert any(o["name"] == "disk.qcow2" for o in listed)
+
+
+def test_ova_job_rejects_an_unsupported_disk_name(env):
+    anonymous(env.client)
+    r = env.client.post("/api/jobs/ova", json={
+        "ova": ova_spec(object_name="disk.raw"),
+        "target": iso_target(display_name="nope"),
+    })
+    assert r.status_code == 400
+    assert "qcow2" in r.json()["detail"]
+
+
 def protect(env, password=UI_PASSWORD):
     env.app.state.ui_password.set_password(password)
 

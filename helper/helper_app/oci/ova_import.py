@@ -1,4 +1,4 @@
-"""Import an OVA from Object Storage and launch an OCI instance."""
+"""Import an OVA, VMDK, or qcow2 disk from Object Storage and launch an OCI instance."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Callable
 from helper_app.branding import TAG_JOB, TAG_SOURCE_DETAILS, TAG_SOURCE_OVA
 from helper_app.config import Settings
 from helper_app.disk.object_vmdk_copy import copy_vmdk_from_ova, copy_vmdk_object
+from helper_app.disk.qcow import QcowError, copy_qcow_object
 from helper_app.jobs.store import utcnow
 from helper_app.models import (
     BootVolumeType,
@@ -198,6 +199,23 @@ class OvaImporter:
         on_progress: ProgressCallback | None,
         check_cancel: Callable[[], None] | None = None,
     ) -> tuple[int, int]:
+        if src.image_format == "qcow2":
+            if not src.bucket_object:
+                raise OciError(f"disk {src.index} has no Object Storage source")
+            try:
+                return copy_qcow_object(
+                    self.c,
+                    namespace,
+                    bucket,
+                    src.bucket_object,
+                    device,
+                    capacity_bytes,
+                    skip_zero_clusters=self.s.skip_zero_grains,
+                    on_progress=on_progress,
+                    check_cancel=check_cancel,
+                )
+            except QcowError as exc:
+                raise OciError(str(exc)) from exc
         if src.bucket_object:
             return copy_vmdk_object(
                 self.c,

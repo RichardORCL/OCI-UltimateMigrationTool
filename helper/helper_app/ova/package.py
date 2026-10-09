@@ -10,8 +10,10 @@ from contextlib import closing
 from dataclasses import dataclass, replace
 
 from helper_app.oci.clients import OciClients, OciError
+from helper_app.disk.qcow import QcowError, parse_qcow_header
 from helper_app.oci.object_bytes import open_object_stream
 from helper_app.oci.object_bytes import read_object_bytes as _read_object_bytes
+from helper_app.oci.object_bytes import read_object_range
 from helper_app.oci.options import object_storage_namespace
 from helper_app.ova.ovf import OvfParseError, boot_disk_index, inspect_ovf, parse_ovf
 
@@ -53,6 +55,7 @@ class OvaDiskSource:
     vmdk_href: str
     bucket_object: str | None = None
     ova_object: str | None = None
+    image_format: str = "vmdk"  # vmdk | qcow2
 
 
 @dataclass
@@ -248,13 +251,42 @@ def _disks_from_parsed_ovf(
     return disks
 
 
+def _qcow_layout(c: OciClients, namespace: str, bucket: str, object_name: str) -> ParsedOvaLayout:
+    """One boot disk whose size is the qcow2 virtual size, not the object size."""
+    try:
+        probe = read_object_range(c, namespace, bucket, object_name, 0, 4096)
+    except Exception as exc:  # noqa: BLE001
+        raise OvaPackageError(f"cannot read {bucket}/{object_name}: {exc}") from exc
+    if not probe:
+        raise OvaPackageError(f"{bucket}/{object_name} is empty or could not be read from Object Storage")
+    try:
+        header = parse_qcow_header(probe)
+    except QcowError as exc:
+        raise OvaPackageError(str(exc)) from exc
+    base = object_name.split("/")[-1]
+    return ParsedOvaLayout(
+        ovf_name=object_name,
+        disks=[
+            OvaDiskSource(
+                index=0,
+                label="disk 0",
+                capacity_bytes=header.virtual_size,
+                is_boot=True,
+                vmdk_href=base,
+                bucket_object=object_name,
+                image_format="qcow2",
+            )
+        ],
+    )
+
+
 def parse_ova_layout(
     c: OciClients,
     namespace: str,
     bucket: str,
     object_name: str,
 ) -> ParsedOvaLayout:
-    """Parse an OVA/OVF/VMDK source and return disk layout without copying objects in Object Storage."""
+    """Parse an OVA, OVF, VMDK, or qcow2 source and return disk layout without copying objects."""
     low = object_name.lower()
 
     if low.endswith(".ovf"):
@@ -297,7 +329,10 @@ def parse_ova_layout(
         ]
         return ParsedOvaLayout(ovf_name=object_name, disks=disks)
 
-    raise OvaPackageError(f"{object_name} must end with .ova, .ovf, or .vmdk")
+    if low.endswith((".qcow2", ".qcow")):
+        return _qcow_layout(c, namespace, bucket, object_name)
+
+    raise OvaPackageError(f"{object_name} must end with .ova, .ovf, .vmdk, or .qcow2")
 
 
 def _extract_ova_tar(
@@ -435,6 +470,8 @@ def parse_and_stage(
             )
         ]
         ovf_name = object_name
+    elif low.endswith((".qcow2", ".qcow")):
+        raise OvaPackageError(f"{object_name} is a qcow2 disk; import it with the OVA import job")
     else:
         raise OvaPackageError(f"{object_name} must end with .ova, .ovf, or .vmdk")
 

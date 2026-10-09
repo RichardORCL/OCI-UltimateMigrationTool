@@ -56,3 +56,26 @@ def read_object_bytes(c: OciClients, namespace: str, bucket: str, object_name: s
         return text.encode() if isinstance(text, str) else bytes(text)
 
     return b""
+
+
+def read_object_range(c: OciClients, namespace: str, bucket: str, object_name: str, start: int, length: int) -> bytes:
+    """Read ``length`` bytes of an object starting at ``start`` (OCI ``Range`` header)."""
+    if length <= 0:
+        return b""
+    if start < 0:
+        raise ValueError(f"negative object offset {start}")
+    end = start + length - 1
+    resp = c.object_storage.get_object(namespace, bucket, object_name, range=f"bytes={start}-{end}")
+    stream = open_object_stream(resp.data)
+    parts: list[bytes] = []
+    remaining = length
+    with closing(stream):
+        while remaining > 0:
+            block = stream.read(min(CHUNK, remaining))
+            if not block:
+                break
+            if not isinstance(block, (bytes, bytearray)):
+                block = bytes(block)
+            parts.append(block)
+            remaining -= len(block)
+    return b"".join(parts)

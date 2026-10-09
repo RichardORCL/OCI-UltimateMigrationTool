@@ -382,7 +382,7 @@ the export, and egress for the data leaving the region. The export runs at Cloud
 ## Import OVA/OVF from Object Storage
 
 For VMs that are not reachable from the tool VM you upload an **`.ova`**, an **`.ovf` with its VMDKs**,
-or a **single `.vmdk`** to an OCI Object Storage bucket (the form can upload it for you through a
+a **single `.vmdk`**, or a **`.qcow2`** (or `.qcow`) disk to an OCI Object Storage bucket (the form can upload it for you through a
 pre-authenticated request) and pick it on the *Import OVA* page. The tool reads the OVF descriptor
 (`ova/ovf.py`: disks, capacities, firmware, boot disk), asks you to confirm operating system and firmware,
 and then runs the shared pipeline:
@@ -393,6 +393,11 @@ and then runs the shared pipeline:
 3. Each VMDK is streamed from Object Storage (`disk/object_vmdk_copy.py`), the stream-optimized grains are
    decoded on the fly and written onto the attached OCI volume, exactly like the vSphere NFC stream.
 4. Linux guest fix-ups, then finalize.
+
+A `.qcow2` or `.qcow` object skips the OVF parse. Its virtual size comes from the qcow2 header, and each
+allocated cluster is written to that offset on the boot volume (`disk/qcow.py`). Unallocated clusters stay
+zero. The import refuses an encrypted image, one that names a backing file, extended L2 entries, and zstd
+compression. There is no OVF, so the operating system and firmware are whatever you select on the form.
 
 No custom-image import is involved, so multi-hundred-GB VMDKs are not limited by the image import
 service, and nothing is extracted or duplicated in the bucket.

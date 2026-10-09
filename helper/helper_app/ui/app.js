@@ -2185,8 +2185,8 @@
         objects = await api("GET", `/oci/ova-objects?bucket=${encodeURIComponent(bucket)}`);
         for (const o of objects) objSel.append(el("option", { value: o.name }, `${o.name} (${fmtBytes(o.size_bytes)})`));
         ovaHint.textContent = objects.length
-          ? "Select one or more OVA/VMDK files (Ctrl+click)."
-          : `No .ova, .ovf, or .vmdk objects in ${bucket}. Upload files or use the OCI console.`;
+          ? "Select one or more OVA, VMDK, or QCOW2 files (Ctrl+click)."
+          : `No .ova, .ovf, .vmdk, or .qcow2 objects in ${bucket}. Upload files or use the OCI console.`;
       } catch (e) { ovaHint.textContent = e.message; }
     };
 
@@ -2350,7 +2350,7 @@
         return;
       }
       const selected = [...osel("object_name").selectedOptions].map((o) => o.value);
-      if (!selected.length) { formError.textContent = "Select at least one OVA file."; return; }
+      if (!selected.length) { formError.textContent = "Select at least one OVA, VMDK, or QCOW2 file."; return; }
       const fd = new FormData(form);
       const bucket = osel("bucket").value;
       const baseTarget = {

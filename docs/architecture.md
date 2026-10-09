@@ -10,7 +10,7 @@ The whole tool is one service, the **OCI Ultimate Migration Tool**, running on a
   (oVirt API 4 and the image proxy), Azure (Entra ID + ARM), AWS (SigV4: STS, EC2, EBS Direct) or
   Google Cloud (service-account JWT: Compute Engine, Cloud Build, Cloud Storage);
 - the migration engine that provisions the OCI target, pulls the disks from the source (NFC, Hyper-V SMB,
-  OLVM image transfer, Azure page blob, EBS Direct, GCS export tarball, or an OVA/OVF in Object Storage) and writes them onto OCI
+  OLVM image transfer, Azure page blob, EBS Direct, GCS export tarball, or an OVA/OVF/qcow2 in Object Storage) and writes them onto OCI
   volumes attached to the Migration Tool itself.
 
 There is no agent in the source environment and no shared secret: the source platform's own RBAC
@@ -199,7 +199,8 @@ Every source is written onto the attached OCI volumes as the data arrives. Memor
   by offset (the 512-byte VHD footer is skipped).
 - **AWS** lists allocated EBS snapshot blocks and fetches them with EBS Direct.
 - **Google Cloud** streams `disk.raw` from the Cloud Build export tarball and skips all-zero blocks.
-- **OVA/OVF** streams VMDK grains from Object Storage the same way as NFC.
+- **OVA/OVF** streams VMDK grains from Object Storage the same way as NFC. A qcow2 object is read by
+  cluster instead: range reads of the allocated clusters, written at their guest offsets.
 
 ## Firmware and seed images
 
