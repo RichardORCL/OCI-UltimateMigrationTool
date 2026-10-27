@@ -50,7 +50,12 @@ ROOT_FS_TYPES = {"xfs", "ext4", "ext3", "ext2"}
 # before deciding whether a candidate is the guest root.
 FSTAB_SPLIT_ROOT_MOUNTS = ("/usr", "/var", "/home")
 DRACUT_TIMEOUT_S = 900
-MIN_FREE_BOOT_BYTES = 150 * 1024 * 1024  # a non-hostonly initramfs is 50-90 MB
+MIN_FREE_BOOT_BYTES = 150 * 1024 * 1024  # in-place rebuild (no staging area): a non-hostonly initramfs is 50-90 MB
+# dracut needs the unpacked tree plus the compressed image in its own temp dir on the guest root before we
+# measure the result; a staging area with less than this is not worth using
+MIN_FREE_STAGING_BYTES = 400 * 1024 * 1024
+BOOT_HEADROOM_BYTES = 4 * 1024 * 1024  # keep a little space in /boot after the new image is in place
+STAGING_DIR = Path("var") / "tmp"  # inside the guest root (dracut's own TMPDIR lives there as well)
 
 # one fix-up at a time: two RHEL guests both call their volume group "rhel"
 _LOCK = threading.Lock()
@@ -82,6 +87,10 @@ class Skip(Exception):
 
 class Fail(Exception):
     """The fix-up was attempted but did not succeed."""
+
+
+class NoSpace(Fail):
+    """A rebuilt initramfs does not fit into the guest's /boot."""
 
 
 class BlockNode(NamedTuple):
@@ -123,13 +132,23 @@ def amazon_modules_extra_package(ver: str) -> str:
     return "kernel-modules-extra"
 
 
+def kernel_version_key(ver: str) -> tuple:
+    """Sort key that orders ``5.14.0-570.60.1`` before ``6.12.0-104.43`` numerically (not lexically)."""
+    return tuple(int(p) if p.isdigit() else p for p in re.split(r"[.\-_+~]", ver))
+
+
 def initramfs_outcome(kernels: list[str], rebuilt: list[str], notes: list[str],
-                      unfixable: Optional[dict[str, list[str]]] = None) -> GuestFixup:
+                      unfixable: Optional[dict[str, list[str]]] = None,
+                      no_space: Optional[dict[str, str]] = None) -> GuestFixup:
     unfixable = unfixable or {}
+    no_space = no_space or {}
     tail = ""
     if unfixable:
         parts = [f"kernel {ver} has no {', '.join(names)} driver" for ver, names in unfixable.items()]
         tail = f"; {'; '.join(parts)} and was left as is (boot the other kernel)"
+    if no_space:
+        tail += (f"; no room in /boot for kernel {', '.join(no_space)} ({next(iter(no_space.values()))}) "
+                 "- left as is, boot the rebuilt kernel")
     if not rebuilt:
         good = len(kernels) - len(unfixable)
         return GuestFixup(status="not_needed", kernels=[], log=notes,
@@ -155,6 +174,8 @@ class _Session:
         self.vgs: list[str] = []  # guest volume groups we activated
         self.boot_problem: Optional[str] = None  # why a separate /boot could not be mounted (initramfs step skips)
         self.unfixable: dict[str, list[str]] = {}  # kernels whose initramfs cannot get the drivers: {ver: [names]}
+        self.no_space: dict[str, str] = {}  # non-default kernels whose new initramfs did not fit in /boot
+        self.root_node: Optional[BlockNode] = None  # the guest root file system, once found
         # LVM must look at this disk only (and ignore the helper's devices file, which does not list it)
         self.lvm_config = ("devices { use_devicesfile=0 filter=[ "
                            f'"a|^{re.escape(self.real)}.*|", "r|.*|" ] }}')
@@ -284,6 +305,7 @@ class _Session:
         self.note(f"block devices: {listed or 'none'}")
 
         root_node = self.find_root(nodes)
+        self.root_node = root_node
         self.note(f"guest root file system on {root_node.path} ({root_node.fstype})")
         try:
             self.mount_boot(nodes)
@@ -347,23 +369,180 @@ class _Session:
         # --no-hostonly: the image must not be tailored to the helper's hardware/mounts either (dracut 004 on
         # RHEL 6 does not know the flag and is not hostonly anyway)
         helptext = self.sh(["chroot", str(self.mnt), "dracut", "--help"], ok=False)
-        extra = ["--no-hostonly"] if "--no-hostonly" in (helptext.stdout + helptext.stderr) else []
+        hostonly_flags = "--no-hostonly" in (helptext.stdout + helptext.stderr)
+        extra = ["--no-hostonly"] if hostonly_flags else []
+
+        # the kernel GRUB boots by default first: if /boot runs out of room, that one must be done
+        default = self.default_kernel([v for v, _ in kernels])
+        todo = [t for t in todo if t[0] == default] + sorted(
+            [t for t in todo if t[0] != default], key=lambda t: kernel_version_key(t[0]), reverse=True)
+        if default:
+            self.note(f"default boot kernel: {default}")
+
         rebuilt = []
         for ver, img in todo:
-            self.check_boot_space(img)
-            self.note(f"rebuilding {img.name} for kernel {ver} (dracut, this takes a minute)")
-            rel = "/" + str(img.relative_to(self.mnt)).replace(os.sep, "/")
-            r = self.sh(["chroot", str(self.mnt), "dracut", "--force", *extra,
-                         "--add-drivers", VIRTIO_DRIVERS, rel, ver], timeout_s=DRACUT_TIMEOUT_S, ok=False)
-            if r.returncode != 0:
-                raise Fail(f"dracut failed for kernel {ver} (rc {r.returncode}): {_tail(r.stderr or r.stdout)}")
-            still_missing = self.missing_in_initramfs(img, ver)
-            if still_missing:
-                raise Fail(f"dracut finished for kernel {ver} but {img.name} still lacks {', '.join(still_missing)} "
-                           "- check the guest's /etc/dracut.conf.d for omit_drivers/drivers settings")
+            try:
+                self.rebuild_one(ver, img, extra, hostonly_fallback=hostonly_flags)
+            except NoSpace as exc:
+                if ver == default or not rebuilt:
+                    raise
+                self.note(f"kernel {ver}: {exc} - left as is")
+                self.no_space[ver] = str(exc)
+                continue
             rebuilt.append(ver)
         self.sh(["sync"], ok=False)
         return [v for v, _ in kernels], rebuilt
+
+    # ------------------------------------------------------------ one kernel
+    def default_kernel(self, versions: list[str]) -> Optional[str]:
+        """The kernel GRUB boots by default (grubby), else the newest installed one."""
+        if (self.mnt / "usr" / "sbin" / "grubby").exists() or (self.mnt / "sbin" / "grubby").exists():
+            r = self.sh(["chroot", str(self.mnt), "grubby", "--default-kernel"], timeout_s=60, ok=False)
+            if r.returncode == 0:
+                name = r.stdout.strip().rsplit("/", 1)[-1]
+                for ver in versions:
+                    if name == f"vmlinuz-{ver}" or name.endswith(f"-{ver}"):
+                        return ver
+        return max(versions, key=kernel_version_key) if versions else None
+
+    def free_bytes(self, path: Path) -> Optional[int]:
+        try:
+            return shutil.disk_usage(path).free
+        except OSError:
+            return None
+
+    def staging_dir(self) -> Optional[Path]:
+        """A directory on the guest root fs with room for a dracut run and the finished image, or None."""
+        var = self.mnt / STAGING_DIR.parts[0]
+        if not var.is_dir():
+            return None
+        staging = self.mnt / STAGING_DIR
+        try:
+            staging.mkdir(exist_ok=True)
+        except OSError:
+            return None
+        free = self.free_bytes(staging)
+        if free is None or free < MIN_FREE_STAGING_BYTES:
+            return None
+        return staging
+
+    def guest_rel(self, path: Path) -> str:
+        return "/" + str(path.relative_to(self.mnt)).replace(os.sep, "/")
+
+    def run_dracut(self, ver: str, out: Path, flags: list[str]) -> None:
+        r = self.sh(["chroot", str(self.mnt), "dracut", "--force", *flags,
+                     "--add-drivers", VIRTIO_DRIVERS, self.guest_rel(out), ver], timeout_s=DRACUT_TIMEOUT_S, ok=False)
+        if r.returncode != 0:
+            raise Fail(f"dracut failed for kernel {ver} (rc {r.returncode}): {_tail(r.stderr or r.stdout)}")
+
+    def verify_image(self, img: Path, ver: str, hostonly: bool) -> None:
+        still_missing = self.missing_in_initramfs(img, ver)
+        if still_missing:
+            raise Fail(f"dracut finished for kernel {ver} but {img.name} still lacks {', '.join(still_missing)} "
+                       "- check the guest's /etc/dracut.conf.d for omit_drivers/drivers settings")
+        if hostonly:
+            lacking = self.missing_root_support(img, ver)
+            if lacking:
+                raise Fail(f"the host-only initramfs for kernel {ver} lacks {', '.join(lacking)} for the guest "
+                           "root file system; free space in /boot inside the guest and migrate again")
+
+    def rebuild_one(self, ver: str, img: Path, extra: list[str], hostonly_fallback: bool) -> None:
+        """Rebuild one initramfs: into a staging file on the guest root when possible (then it is only moved
+        into /boot if it fits, falling back to a smaller host-only image), else in place."""
+        staging = self.staging_dir()
+        if staging is None:
+            self.check_boot_space(img)
+            self.note(f"rebuilding {img.name} for kernel {ver} (dracut, this takes a minute)")
+            self.run_dracut(ver, img, extra)
+            self.verify_image(img, ver, hostonly=False)
+            return
+
+        stage = staging / f"oci-umt-{img.name}"
+        try:
+            self.note(f"rebuilding {img.name} for kernel {ver} (dracut, this takes a minute)")
+            self.run_dracut(ver, stage, extra)
+            self.verify_image(stage, ver, hostonly=False)
+            fits, why = self.fits_in_boot(stage, img)
+            if not fits and hostonly_fallback:
+                # dracut in the chroot sees the guest's root/LVM layout and the helper's hardware, which is
+                # the OCI hardware: a host-only image (what virt-v2v produces) is a third of the size
+                self.note(f"kernel {ver}: {why}; building a smaller host-only image for the OCI hardware instead")
+                self.run_dracut(ver, stage, ["--hostonly"])
+                self.verify_image(stage, ver, hostonly=True)
+                fits, why = self.fits_in_boot(stage, img)
+            if not fits:
+                raise NoSpace(f"{why}; free space in /boot inside the guest (remove old kernels) and migrate again")
+            self.install_image(stage, img)
+        finally:
+            try:
+                stage.unlink()
+            except OSError:
+                pass
+
+    def fits_in_boot(self, stage: Path, img: Path) -> tuple[bool, str]:
+        new_size = stage.stat().st_size
+        old_size = img.stat().st_size if img.exists() else 0
+        free = self.free_bytes(img.parent)
+        if free is None:
+            return True, ""
+        mb = 1024 * 1024
+        if free + old_size >= new_size + BOOT_HEADROOM_BYTES:
+            return True, ""
+        return False, (f"the new {new_size // mb} MB initramfs does not fit in /boot ({free // mb} MB free plus "
+                       f"the {old_size // mb} MB of the current {img.name})")
+
+    def install_image(self, stage: Path, img: Path) -> None:
+        """Replace ``img`` with ``stage``; the old image is kept on the root fs until the copy succeeded."""
+        backup = stage.with_name(stage.name + ".previous")
+        label = None
+        if hasattr(os, "getxattr"):
+            try:
+                label = os.getxattr(img, "security.selinux")
+            except OSError:
+                label = None
+        shutil.copyfile(img, backup)
+        try:
+            img.unlink()
+            shutil.copyfile(stage, img)
+            os.chmod(img, 0o600)
+            if label is not None:
+                try:
+                    os.setxattr(img, "security.selinux", label)
+                except OSError:
+                    pass
+            with open(img, "r+b") as fh:
+                os.fsync(fh.fileno())
+        except OSError as exc:
+            try:
+                shutil.copyfile(backup, img)
+            except OSError:
+                pass
+            raise Fail(f"cannot write {img.name} into the guest's /boot: {exc}") from exc
+        finally:
+            try:
+                backup.unlink()
+            except OSError:
+                pass
+
+    def missing_root_support(self, img: Path, ver: str) -> list[str]:
+        """Pieces a host-only image needs to reach the guest root: its fs driver and, on LVM, the lvm module."""
+        root = self.root_node
+        if root is None:
+            return []
+        r = self.sh(["chroot", str(self.mnt), "lsinitrd", self.guest_rel(img)], timeout_s=120, ok=False)
+        if r.returncode != 0:
+            return ["a readable image (lsinitrd failed)"]
+        lacking = []
+        fstype = root.fstype
+        if fstype in ROOT_FS_TYPES:
+            drivers = ("ext4", fstype) if fstype.startswith("ext") else (fstype,)  # ext4.ko also mounts ext2/3
+            builtin = self.builtin_drivers(ver)
+            if not any(d in builtin or self._module_file_pattern(d).search(r.stdout) for d in drivers):
+                lacking.append(f"the {fstype} driver")
+        if root.type == "lvm" and not re.search(r"(?m)^\s*lvm\s*$|(?:^|/)usr/sbin/lvm(?:\s|$)|(?:^|/)sbin/lvm(?:\s|$)",
+                                                r.stdout):
+            lacking.append("the lvm module")
+        return lacking
 
     def activate_lvm(self) -> None:
         r = self.sh(["pvs", "--config", self.lvm_config, "--noheadings", "-o", "pv_name,vg_name"], ok=False)
@@ -663,13 +842,12 @@ class _Session:
         return msg + "; install the kernel package that provides it in the source VM, then migrate again"
 
     def check_boot_space(self, img: Path) -> None:
-        try:
-            free = shutil.disk_usage(img.parent).free
-        except OSError:
+        free = self.free_bytes(img.parent)
+        if free is None:
             return
         if free < MIN_FREE_BOOT_BYTES:
-            raise Fail(f"only {free // (1024 * 1024)} MB free in the guest's /boot; a non-hostonly initramfs "
-                       "needs about 150 MB - free space in /boot inside the guest and migrate again")
+            raise NoSpace(f"only {free // (1024 * 1024)} MB free in the guest's /boot; a non-hostonly initramfs "
+                          "needs about 150 MB - free space in /boot inside the guest and migrate again")
 
     # ---------------------------------------------------------------- cleanup
     def cleanup(self) -> None:

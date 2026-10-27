@@ -28,8 +28,14 @@ class FakeShell:
                  lvm_foreign_vgs=("ocivolume",), dracut=True, dracut_rc=0, fail_mount=(), old_dracut=False,
                  udev_stale=False, lsblk_hides_lvs=False, blkid_fails=False, partial_virtio=(),
                  modules_missing=(), builtin=(), os_release=None, scsi_no_sd=(), lvm_already_active=False,
-                 lvm_mapper_node=False, lvm_stuck=False):
+                 lvm_mapper_node=False, lvm_stuck=False, image_sizes=None, default_kernel=None,
+                 hostonly_lacks=(), no_var=False):
         self.layout = layout
+        self.image_sizes = image_sizes or {}  # {(kernel, "generic"|"hostonly"): bytes} padding of dracut's output
+        self.default_kernel = default_kernel  # what `grubby --default-kernel` answers (grubby absent if None)
+        self.hostonly_lacks = set(hostonly_lacks)  # "xfs" / "lvm" missing from a host-only image
+        self.no_var = no_var  # guest root without /var (no staging area: rebuild in place)
+        self.dracut_calls: list[tuple[str, str, str]] = []  # (kernel, mode, outfile)
         self.scsi_no_sd = set(scsi_no_sd)  # kernels whose initramfs has virtio_pci+virtio_scsi but no sd_mod
         self.partial_virtio = set(partial_virtio)  # kernels whose initramfs has virtio_blk/net but no virtio_scsi
         # driver names absent from the guest's /lib/modules: a set (all kernels) or {kernel: set}
@@ -146,6 +152,11 @@ class FakeShell:
         if self.dracut:
             (mnt / "usr" / "bin").mkdir(parents=True, exist_ok=True)
             (mnt / "usr" / "bin" / "dracut").write_text("#!/bin/bash\n")
+        if self.default_kernel:
+            (mnt / "usr" / "sbin").mkdir(parents=True, exist_ok=True)
+            (mnt / "usr" / "sbin" / "grubby").write_text("")
+        if not self.no_var:
+            (mnt / "var" / "tmp").mkdir(parents=True, exist_ok=True)
         if not self.boot_fstab:  # /boot on the root fs
             self.fill_boot(mnt / "boot")
         # a RHEL 7 style network stack: NetworkManager enabled, profile bound to ens192
@@ -336,6 +347,9 @@ class FakeShell:
             if prog == "lsinitrd":
                 img = root / argv[3].lstrip("/")
                 return CmdResult(0, img.read_text(), "") if img.exists() else CmdResult(1, "", "no such file")
+            if prog == "grubby":
+                assert argv[3] == "--default-kernel"
+                return CmdResult(0, f"/boot/vmlinuz-{self.default_kernel}\n", "")
             if prog == "dracut":
                 if argv[3] == "--help":
                     return CmdResult(0, "" if self.old_dracut else "  -N, --no-hostonly  Host-Only mode off", "")
@@ -343,12 +357,23 @@ class FakeShell:
                     return CmdResult(self.dracut_rc, "", "dracut: Failed to install module kernel-modules")
                 img, ver = root / argv[-2].lstrip("/"), argv[-1]
                 assert "--add-drivers" in argv and VIRTIO_DRIVERS in argv
-                assert ("--no-hostonly" in argv) is (not self.old_dracut)
-                img.write_text(f"generic image {ver}\nusr/lib/modules/x/kernel/drivers/block/virtio_blk.ko.xz\n"
-                               "usr/lib/modules/x/kernel/drivers/virtio/virtio_pci.ko.xz\n"
-                               "usr/lib/modules/x/kernel/drivers/scsi/sd_mod.ko.xz\n"
-                               + ("" if "virtio_scsi" in self.missing_for(ver) or "virtio_scsi" in self.builtin
-                                  else "usr/lib/modules/x/kernel/drivers/scsi/virtio_scsi.ko.xz\n"))
+                mode = "hostonly" if "--hostonly" in argv else "generic"
+                if mode == "generic":
+                    assert ("--no-hostonly" in argv) is (not self.old_dracut)
+                self.dracut_calls.append((ver, mode, argv[-2]))
+                listing = (f"{mode} image {ver}\nusr/lib/modules/x/kernel/drivers/block/virtio_blk.ko.xz\n"
+                           "usr/lib/modules/x/kernel/drivers/virtio/virtio_pci.ko.xz\n"
+                           "usr/lib/modules/x/kernel/drivers/scsi/sd_mod.ko.xz\n"
+                           + ("" if "virtio_scsi" in self.missing_for(ver) or "virtio_scsi" in self.builtin
+                              else "usr/lib/modules/x/kernel/drivers/scsi/virtio_scsi.ko.xz\n"))
+                if mode == "generic" or "xfs" not in self.hostonly_lacks:
+                    listing += "usr/lib/modules/x/kernel/fs/xfs/xfs.ko.xz\nusr/lib/modules/x/kernel/fs/ext4/ext4.ko.xz\n"
+                if mode == "generic" or "lvm" not in self.hostonly_lacks:
+                    listing += "lvm\nusr/sbin/lvm\n"
+                pad = self.image_sizes.get((ver, mode), 0)
+                if pad:
+                    listing += "#" * max(0, pad - len(listing) - 1) + "\n"
+                img.write_text(listing)
                 self.rebuilt.append(ver)
                 return CmdResult(0, "", "")
         raise AssertionError(f"unexpected command {argv}")
@@ -409,7 +434,7 @@ def test_lvs_found_even_when_udev_has_not_probed_them(base):
     system type, so the root LV was not a candidate.  blkid -p fills the gap."""
     shell = FakeShell(layout="lvm", udev_stale=True)
     result, msgs = run(shell, base)
-    assert result.status == "done" and result.kernels == [OLD_KERNEL, RHEL_KERNEL], result
+    assert result.status == "done" and result.kernels == [RHEL_KERNEL, OLD_KERNEL], result  # newest (default) first
     assert "/dev/mapper/rhel-root" in shell.probed
     assert any("block devices:" in m and "/dev/mapper/rhel-root (lvm, xfs)" in m for m in msgs)
     # lsblk does not even list the LVs: lvs supplies them
@@ -424,11 +449,11 @@ def test_rhel_split_usr_root_and_modules_on_separate_lvs(base):
     """RHEL 9 on Azure: / has fstab, kernel modules and dracut live on a separate /usr LV."""
     shell = FakeShell(layout="rhel_split_usr", boot_fstab="UUID=boot-uuid")
     result, msgs = run(shell, base)
-    assert result.status == "done" and result.kernels == [OLD_KERNEL, RHEL_KERNEL], result
+    assert result.status == "done" and result.kernels == [RHEL_KERNEL, OLD_KERNEL], result  # newest (default) first
     assert any("guest root file system on /dev/mapper/rootvg-rootlv" in m for m in msgs)
     assert any("mounted /usr from /dev/mapper/rootvg-usrlv" in m for m in msgs)
     assert any("/boot on /dev/sdb1" in m for m in msgs)
-    assert shell.rebuilt == [OLD_KERNEL, RHEL_KERNEL]
+    assert shell.rebuilt == [RHEL_KERNEL, OLD_KERNEL]
 
 
 def test_rhel_split_usr_fstab_by_id_dm_name(base):
@@ -735,3 +760,119 @@ def test_resolve_spec_dm_name_and_helper_symlinks(monkeypatch):
     monkeypatch.setattr("helper_app.guest.initramfs.os.path.exists", lambda p: p == link)
     monkeypatch.setattr("helper_app.guest.initramfs.os.path.realpath", lambda p: "/dev/mapper/rootvg-usrlv")
     assert sess.resolve_spec(link, nodes) == "/dev/mapper/rootvg-usrlv"
+
+
+# ---------------------------------------------------------------- /boot space handling
+UEK_OLD = "6.12.0-104.43.4.3.el9uek.x86_64"
+UEK_NEW = "6.12.0-202.76.4.1.el9uek.x86_64"
+RHCK = "5.14.0-570.60.1.0.1.el9_6.x86_64"
+
+
+def test_kernel_version_key_orders_numerically():
+    from helper_app.guest.initramfs import kernel_version_key
+
+    assert sorted([UEK_NEW, RHCK, UEK_OLD], key=kernel_version_key) == [RHCK, UEK_OLD, UEK_NEW]
+    assert max([RHCK, UEK_NEW, UEK_OLD], key=kernel_version_key) == UEK_NEW
+
+
+def _boot_space(monkeypatch, boot_free: int):
+    """Script the free space the fixer sees: ``boot_free`` under /boot, plenty on the guest root."""
+    monkeypatch.setattr("helper_app.guest.initramfs.BOOT_HEADROOM_BYTES", 0)
+    monkeypatch.setattr(_Session, "free_bytes",
+                        lambda self, p: boot_free if "boot" in Path(p).parts else 10 * 1024 ** 3)
+
+
+def _boot_images(shell: FakeShell):
+    """Capture the /boot images as they are when the guest is unmounted."""
+    seen = {}
+    orig = shell.__call__
+
+    def spy(argv, timeout_s):
+        if argv[0] == "umount":
+            boot = Path(argv[-1]) / "boot" if (Path(argv[-1]) / "boot").is_dir() else Path(argv[-1])
+            for p in boot.glob("initramfs-*.img"):
+                seen[p.name] = p.read_text()
+            for p in (Path(argv[-1]) / "var" / "tmp").glob("*") if (Path(argv[-1]) / "var" / "tmp").is_dir() else []:
+                seen["staging:" + p.name] = p.name
+        return orig(argv, timeout_s)
+
+    return spy, seen
+
+
+def test_image_is_built_on_the_root_fs_and_moved_into_boot(base):
+    shell = FakeShell(layout="lvm", virtio_in={OLD_KERNEL})
+    spy, seen = _boot_images(shell)
+    result, msgs = run(spy, base)  # type: ignore[arg-type]
+    assert result.status == "done" and result.kernels == [RHEL_KERNEL]
+    assert shell.dracut_calls == [(RHEL_KERNEL, "generic", f"/var/tmp/oci-umt-initramfs-{RHEL_KERNEL}.img")]
+    assert seen[f"initramfs-{RHEL_KERNEL}.img"].startswith(f"generic image {RHEL_KERNEL}")
+    assert not any(k.startswith("staging:") for k in seen), seen  # staging file and backup removed
+
+
+def test_root_without_var_rebuilds_in_place(base, monkeypatch):
+    shell = FakeShell(layout="lvm", virtio_in={OLD_KERNEL}, no_var=True)
+    result, _ = run(shell, base)
+    assert result.status == "done"
+    assert shell.dracut_calls == [(RHEL_KERNEL, "generic", f"/boot/initramfs-{RHEL_KERNEL}.img")]
+    # ... and there the old 150 MB pre-check still applies
+    _boot_space(monkeypatch, 49 * 1024 * 1024)
+    result, _ = run(FakeShell(layout="lvm", virtio_in={OLD_KERNEL}, no_var=True), base)
+    assert result.status == "failed" and "only 49 MB free" in result.detail
+
+
+def test_too_big_generic_image_falls_back_to_hostonly(base, monkeypatch):
+    _boot_space(monkeypatch, 49_000)
+    shell = FakeShell(layout="lvm", virtio_in={OLD_KERNEL},
+                      image_sizes={(RHEL_KERNEL, "generic"): 100_000, (RHEL_KERNEL, "hostonly"): 40_000})
+    spy, seen = _boot_images(shell)
+    result, msgs = run(spy, base)  # type: ignore[arg-type]
+    assert result.status == "done" and result.kernels == [RHEL_KERNEL], result
+    assert [m for _, m, _ in shell.dracut_calls] == ["generic", "hostonly"]
+    assert seen[f"initramfs-{RHEL_KERNEL}.img"].startswith(f"hostonly image {RHEL_KERNEL}")
+    assert any("does not fit in /boot" in m and "smaller host-only image" in m for m in msgs)
+
+
+def test_hostonly_image_without_lvm_support_is_rejected(base, monkeypatch):
+    _boot_space(monkeypatch, 49_000)
+    shell = FakeShell(layout="lvm", virtio_in={OLD_KERNEL}, hostonly_lacks={"lvm"},
+                      image_sizes={(RHEL_KERNEL, "generic"): 100_000, (RHEL_KERNEL, "hostonly"): 40_000})
+    spy, seen = _boot_images(shell)
+    result, _ = run(spy, base)  # type: ignore[arg-type]
+    assert result.status == "failed" and "lacks the lvm module" in result.detail
+    # the original image is untouched
+    assert "vmw_pvscsi" in seen[f"initramfs-{RHEL_KERNEL}.img"]
+
+
+def test_default_kernel_goes_first_and_others_may_be_left_without_space(base, monkeypatch):
+    _boot_space(monkeypatch, 49_000)
+    # grubby says the *older* kernel is the default; the newer one does not fit even host-only
+    shell = FakeShell(layout="lvm", default_kernel=OLD_KERNEL,
+                      image_sizes={(OLD_KERNEL, "generic"): 40_000,
+                                   (RHEL_KERNEL, "generic"): 100_000, (RHEL_KERNEL, "hostonly"): 90_000})
+    result, msgs = run(shell, base)
+    assert result.status == "done", result
+    assert result.kernels == [OLD_KERNEL]
+    assert [v for v, _, _ in shell.dracut_calls] == [OLD_KERNEL, RHEL_KERNEL, RHEL_KERNEL]
+    assert f"no room in /boot for kernel {RHEL_KERNEL}" in result.detail
+    assert any(f"default boot kernel: {OLD_KERNEL}" in m for m in msgs)
+
+
+def test_without_grubby_the_newest_kernel_is_the_default(base, monkeypatch):
+    _boot_space(monkeypatch, 49_000)
+    shell = FakeShell(layout="lvm", image_sizes={(RHEL_KERNEL, "generic"): 40_000, (OLD_KERNEL, "generic"): 100_000,
+                                                 (OLD_KERNEL, "hostonly"): 90_000})
+    result, _ = run(shell, base)
+    assert result.status == "done" and result.kernels == [RHEL_KERNEL]
+    assert shell.dracut_calls[0][0] == RHEL_KERNEL
+
+
+def test_default_kernel_that_does_not_fit_fails_the_step(base, monkeypatch):
+    _boot_space(monkeypatch, 49_000)
+    shell = FakeShell(layout="lvm", virtio_in={OLD_KERNEL},
+                      image_sizes={(RHEL_KERNEL, "generic"): 100_000, (RHEL_KERNEL, "hostonly"): 90_000})
+    spy, seen = _boot_images(shell)
+    result, _ = run(spy, base)  # type: ignore[arg-type]
+    assert result.status == "failed"
+    assert "does not fit in /boot" in result.detail and "remove old kernels" in result.detail
+    assert "vmw_pvscsi" in seen[f"initramfs-{RHEL_KERNEL}.img"]  # untouched
+    assert not any(k.startswith("staging:") for k in seen)

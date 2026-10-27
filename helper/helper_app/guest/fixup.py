@@ -87,7 +87,8 @@ class GuestFixer:
                 if initramfs:
                     try:
                         kernels, rebuilt = session.rebuild_initramfs()
-                        res_i = initramfs_outcome(kernels, rebuilt, notes[:], session.unfixable)  # incl. disk scan notes
+                        res_i = initramfs_outcome(kernels, rebuilt, notes[:], session.unfixable,  # incl. disk scan notes
+                                                  session.no_space)
                     except Exception as exc:  # noqa: BLE001
                         res_i = outcome(exc, 0)
                 if network:
