@@ -234,12 +234,14 @@ class OvaImporter:
                 namespace,
                 bucket,
                 src.ova_object,
-                src.vmdk_href,
+                src.ova_member or src.vmdk_href,
                 device,
                 capacity_bytes,
                 skip_zero_grains=self.s.skip_zero_grains,
                 on_progress=on_progress,
                 check_cancel=check_cancel,
+                member_offset=src.ova_member_offset,
+                member_size=src.ova_member_size,
             )
         raise OciError(f"disk {src.index} has no Object Storage source")
 

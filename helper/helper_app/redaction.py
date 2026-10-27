@@ -16,6 +16,10 @@ _SECRET = re.compile(
 )
 
 
+# Loggers whose formatter reads ``record.args`` positionally (uvicorn.logging.AccessFormatter).
+_KEEP_ARGS_LOGGERS = frozenset({"uvicorn.access"})
+
+
 def redact(text: str) -> str:
     text = _PRIVATE_KEY.sub("[REDACTED PRIVATE KEY]", text)
     text = _URL_USER.sub(r"\1[REDACTED]@", text)
@@ -31,8 +35,13 @@ def configure_logging_redaction() -> None:
 
     def factory(*args, **kwargs):
         record = previous(*args, **kwargs)
-        record.msg = redact(record.getMessage())
-        record.args = ()
+        if record.name in _KEEP_ARGS_LOGGERS and isinstance(record.args, tuple):
+            # uvicorn's AccessFormatter unpacks the 5 positional args itself; flattening them makes
+            # every request log a "not enough values to unpack" traceback instead of an access line.
+            record.args = tuple(redact(a) if isinstance(a, str) else a for a in record.args)
+        else:
+            record.msg = redact(record.getMessage())
+            record.args = ()
         if record.exc_info:
             record.exc_text = redact("".join(traceback.format_exception(*record.exc_info)))
         return record

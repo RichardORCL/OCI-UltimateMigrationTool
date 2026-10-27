@@ -80,6 +80,29 @@ def copy_vmdk_object(
     )
 
 
+def _iter_object_range(
+    c: OciClients, namespace: str, bucket: str, object_name: str, start: int, length: int, label: str,
+) -> Iterator[bytes]:
+    """Stream ``length`` bytes of an object from ``start`` with a single ranged ``GetObject``."""
+    if length <= 0:
+        return
+    resp = c.object_storage.get_object(namespace, bucket, object_name, range=f"bytes={start}-{start + length - 1}")
+    stream = open_object_stream(resp.data)
+    got = 0
+    with closing(stream):
+        while got < length:
+            chunk = stream.read(min(CHUNK, length - got))
+            if not chunk:
+                break
+            got += len(chunk)
+            yield chunk
+    if got != length:
+        raise VmdkFormatError(
+            f"{label}: Object Storage returned {got} of {length} bytes (bytes {start}-{start + length - 1} of "
+            f"{object_name}); the object may be shorter than its tar header claims"
+        )
+
+
 def _iter_ova_vmdk(
     c: OciClients,
     namespace: str,
@@ -88,16 +111,19 @@ def _iter_ova_vmdk(
     vmdk_basename: str,
     check_cancel: Callable[[], None] | None = None,
 ) -> Iterator[bytes]:
+    """Sequential fallback: walk the tarball until the wanted member (used when the archive is compressed)."""
     resp = c.object_storage.get_object(namespace, bucket, ova_object_name)
     stream = open_object_stream(resp.data)
-    want = vmdk_basename.split("/")[-1].lower()
+    want = vmdk_basename.replace("\\", "/").split("/")[-1].lower()
+    seen: list[str] = []
     with closing(stream), tarfile.open(fileobj=stream, mode="r|*") as tar:
         for member in tar:
             if check_cancel:
                 check_cancel()
             if not member.isfile():
                 continue
-            base = member.name.split("/")[-1]
+            base = member.name.replace("\\", "/").split("/")[-1]
+            seen.append(base)
             f = tar.extractfile(member)
             if f is None:
                 continue
@@ -106,13 +132,22 @@ def _iter_ova_vmdk(
                     if check_cancel:
                         check_cancel()
                 continue
+            got = 0
             while True:
                 chunk = f.read(CHUNK)
                 if not chunk:
                     break
+                got += len(chunk)
                 yield chunk
+            if got != member.size:
+                raise VmdkFormatError(
+                    f"{base} in {ova_object_name} ended after {got} of {member.size} bytes (archive truncated?)"
+                )
             return
-    raise VmdkFormatError(f"{vmdk_basename} not found inside {ova_object_name}")
+    raise VmdkFormatError(
+        f"{vmdk_basename} not found inside {ova_object_name}; the archive ended after "
+        f"{', '.join(seen) or 'no file entries'}"
+    )
 
 
 def copy_vmdk_from_ova(
@@ -126,11 +161,21 @@ def copy_vmdk_from_ova(
     skip_zero_grains: bool = True,
     on_progress: Callable[[int, int], None] | None = None,
     check_cancel: Callable[[], None] | None = None,
+    member_offset: int | None = None,
+    member_size: int | None = None,
 ) -> tuple[int, int]:
-    """Stream one VMDK member from an ``.ova`` tarball onto ``device``."""
+    """Stream one VMDK member from an ``.ova`` tarball onto ``device``.
+
+    With ``member_offset``/``member_size`` (from the OVA index) the member is read with one ranged
+    request; otherwise the whole archive is walked sequentially.
+    """
     label = f"{ova_object_name}:{vmdk_basename}"
+    if member_offset is not None and member_size is not None:
+        chunks = _iter_object_range(c, namespace, bucket, ova_object_name, member_offset, member_size, label)
+    else:
+        chunks = _iter_ova_vmdk(c, namespace, bucket, ova_object_name, vmdk_basename, check_cancel)
     return _decode_vmdk_stream(
-        _iter_ova_vmdk(c, namespace, bucket, ova_object_name, vmdk_basename, check_cancel),
+        chunks,
         label,
         device,
         capacity_bytes,

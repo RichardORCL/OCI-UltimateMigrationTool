@@ -388,10 +388,16 @@ pre-authenticated request) and pick it on the *Import OVA* page. The tool reads 
 and then runs the shared pipeline:
 
 1. `parse_ova_layout` (`ova/package.py`) resolves where every VMDK lives: an object next to the `.ovf`,
-   or a member inside the `.ova` tar (read by seeking through the tar stream).
+   or a member inside the `.ova` tar. The tar's table of contents is read with a few small `Range`
+   requests (`ova/tar_index.py`: only the 512-byte headers are fetched, whatever the archive size), so a
+   missing or misnamed disk, a truncated upload, or a non-tar file is reported here, before anything is
+   provisioned, together with the entries the archive actually contains. If the OVF names one disk and the
+   archive holds exactly one `.vmdk` under a different name (typical for a hand-repacked vSphere export),
+   that disk is used and a warning is logged.
 2. Seed image, placeholder instance, boot and data volumes as for every migration.
-3. Each VMDK is streamed from Object Storage (`disk/object_vmdk_copy.py`), the stream-optimized grains are
-   decoded on the fly and written onto the attached OCI volume, exactly like the vSphere NFC stream.
+3. Each VMDK is streamed from Object Storage (`disk/object_vmdk_copy.py`) with one ranged `GetObject`
+   covering just that tar member; the stream-optimized grains are decoded on the fly and written onto the
+   attached OCI volume, exactly like the vSphere NFC stream.
 4. Linux guest fix-ups, then finalize.
 
 A `.qcow2` or `.qcow` object skips the OVF parse. Its virtual size comes from the qcow2 header, and each

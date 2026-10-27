@@ -16,6 +16,7 @@ from helper_app.oci.object_bytes import read_object_bytes as _read_object_bytes
 from helper_app.oci.object_bytes import read_object_range
 from helper_app.oci.options import object_storage_namespace
 from helper_app.ova.ovf import OvfParseError, boot_disk_index, inspect_ovf, parse_ovf
+from helper_app.ova.tar_index import OvaIndex, OvaIndexError, OvaMember, index_ova, read_member
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +57,9 @@ class OvaDiskSource:
     bucket_object: str | None = None
     ova_object: str | None = None
     image_format: str = "vmdk"  # vmdk | qcow2
+    ova_member: str | None = None  # resolved tar entry name inside ``ova_object``
+    ova_member_offset: int | None = None  # byte offset of the entry's data (None: archive is not seekable)
+    ova_member_size: int | None = None
 
 
 @dataclass
@@ -109,7 +113,8 @@ def read_ovf_from_object(
         return _fetch_object_bytes(c, namespace, bucket, object_name)
     if not low.endswith(".ova"):
         raise OvaPackageError("Load requires an .ova or .ovf file (a standalone .vmdk has no OVF descriptor)")
-    return _ovf_from_ova_stream(c, namespace, bucket, object_name)
+    ovf_bytes, _index = _ovf_from_ova(c, namespace, bucket, object_name)
+    return ovf_bytes
 
 
 def inspect_ova_object(
@@ -192,35 +197,61 @@ def inspect_ova_object(
     )
 
 
-def _ovf_from_ova_stream(
+def _index_ova_object(c: OciClients, namespace: str, bucket: str, object_name: str) -> OvaIndex:
+    try:
+        return index_ova(c, namespace, bucket, object_name)
+    except OvaIndexError as exc:
+        raise OvaPackageError(str(exc)) from exc
+    except tarfile.ReadError as exc:
+        raise OvaPackageError(f"{bucket}/{object_name} is not a tar archive (an OVA is an uncompressed tar): {exc}") from exc
+    except OciError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise OvaPackageError(f"cannot read {bucket}/{object_name}: {exc}") from exc
+
+
+def _ovf_from_ova(
     c: OciClients,
     namespace: str,
     bucket: str,
     object_name: str,
-) -> bytes:
+) -> tuple[bytes, OvaIndex]:
+    """The OVF descriptor and the table of contents of an ``.ova`` in Object Storage."""
+    index = _index_ova_object(c, namespace, bucket, object_name)
+    ovfs = index.files_with_suffix(".ovf")
+    if not ovfs:
+        detail = f" (entries: {index.describe()})" if index.members else ""
+        raise OvaPackageError(f"{object_name} contains no .ovf descriptor{detail}")
     try:
-        resp = c.object_storage.get_object(namespace, bucket, object_name)
-    except Exception as exc:  # noqa: BLE001
-        raise OvaPackageError(f"cannot read {bucket}/{object_name}: {exc}") from exc
-    stream = open_object_stream(resp.data)
-    ovf_bytes: bytes | None = None
-    chunk = 1024 * 1024
-    with closing(stream), tarfile.open(fileobj=stream, mode="r|*") as tar:
-        for member in tar:
-            if not member.isfile():
-                continue
-            base = member.name.split("/")[-1]
-            f = tar.extractfile(member)
-            if f is None:
-                continue
-            if base.lower().endswith(".ovf"):
-                ovf_bytes = f.read()
-                break
-            while f.read(chunk):
-                pass
-    if ovf_bytes is None:
-        raise OvaPackageError(f"{object_name} contains no .ovf descriptor")
-    return ovf_bytes
+        ovf_bytes = read_member(c, namespace, bucket, object_name, ovfs[0])
+    except tarfile.ReadError as exc:
+        raise OvaPackageError(str(exc)) from exc
+    return ovf_bytes, index
+
+
+def _resolve_ova_member(index: OvaIndex, href: str, disk_count: int, object_name: str) -> OvaMember:
+    """Match an OVF ``File href`` to a tar entry; a lone disk in a lone-disk OVA may be named differently."""
+    member = index.find(href)
+    if member is not None:
+        return member
+    vmdks = index.files_with_suffix(".vmdk")
+    if disk_count == 1 and len(vmdks) == 1:
+        log.warning(
+            "%s: OVF references %s but the archive's only disk is %s; using it", object_name, href, vmdks[0].basename,
+        )
+        return vmdks[0]
+    hint = ""
+    if index.truncated_at is not None:
+        hint = (
+            f" The listing stopped at byte {index.truncated_at} on an entry that is not a valid tar header, "
+            f"so the archive is probably corrupt or was not written by an OVF tool."
+        )
+    elif not index.seekable:
+        hint = " The archive is compressed; an OVA must be a plain tar."
+    raise OvaPackageError(
+        f"{object_name} does not contain {href}, which its OVF descriptor references. "
+        f"Entries in the archive: {index.describe()}.{hint}"
+    )
 
 
 def _disks_from_parsed_ovf(
@@ -228,6 +259,7 @@ def _disks_from_parsed_ovf(
     *,
     bucket_object_for_href: Callable[[str], str] | None = None,
     ova_object: str | None = None,
+    ova_index: OvaIndex | None = None,
 ) -> list[OvaDiskSource]:
     boot_i = boot_disk_index(parsed)
     disks: list[OvaDiskSource] = []
@@ -237,17 +269,21 @@ def _disks_from_parsed_ovf(
             raise OvaPackageError(f"OVF disk {d.disk_id} references unknown file {d.file_id}")
         href = f.href
         bucket_obj = bucket_object_for_href(href) if bucket_object_for_href else None
-        disks.append(
-            OvaDiskSource(
-                index=i,
-                label=d.label or f"disk {i}",
-                capacity_bytes=d.capacity_bytes,
-                is_boot=(i == boot_i),
-                vmdk_href=href.split("/")[-1],
-                bucket_object=bucket_obj,
-                ova_object=ova_object if bucket_obj is None else None,
-            )
+        src = OvaDiskSource(
+            index=i,
+            label=d.label or f"disk {i}",
+            capacity_bytes=d.capacity_bytes,
+            is_boot=(i == boot_i),
+            vmdk_href=href.split("/")[-1],
+            bucket_object=bucket_obj,
+            ova_object=ova_object if bucket_obj is None else None,
         )
+        if src.ova_object and ova_index is not None:
+            member = _resolve_ova_member(ova_index, href, len(parsed.disks), ova_object or "")
+            src.ova_member = member.name
+            src.ova_member_offset = member.offset_data
+            src.ova_member_size = member.size
+        disks.append(src)
     return disks
 
 
@@ -304,14 +340,15 @@ def parse_ova_layout(
         return ParsedOvaLayout(ovf_name=object_name, disks=disks)
 
     if low.endswith(".ova"):
-        ovf_bytes = _ovf_from_ova_stream(c, namespace, bucket, object_name)
+        ovf_bytes, index = _ovf_from_ova(c, namespace, bucket, object_name)
         try:
             parsed = parse_ovf(ovf_bytes)
         except OvfParseError as exc:
             raise OvaPackageError(str(exc)) from exc
         if len(parsed.disks) > MAX_DISKS:
             raise OvaPackageError(f"OVA has {len(parsed.disks)} disks; maximum is {MAX_DISKS}")
-        disks = _disks_from_parsed_ovf(parsed, ova_object=object_name)
+        disks = _disks_from_parsed_ovf(parsed, ova_object=object_name, ova_index=index)
+        log.info("%s/%s: %s", bucket, object_name, index.describe())
         return ParsedOvaLayout(ovf_name=object_name, disks=disks)
 
     if low.endswith(".vmdk"):
