@@ -509,9 +509,10 @@ class NutanixClient:
             urls.append(f"{self.base_url}/api/nutanix/v0.8/images/{image_uuid}/file")
         return urls
 
-    def probe_file(self, url: str) -> tuple[int, bool]:
-        """``(size or 0, ranges supported)`` for an image download URL, without reading the body."""
-        headers = {"Range": "bytes=0-0", "Accept": "application/octet-stream"}
+    def probe_file(self, url: str) -> tuple[int, bool, str]:
+        """``(size or 0, ranges supported, what the server answered)`` for an image download URL,
+        without reading the body."""
+        headers = {"Range": "bytes=0-511", "Accept": "application/octet-stream"}
         try:
             with self.http.stream("GET", url, headers=headers, auth=self._auth) as resp:
                 if resp.status_code in (401, 403):
@@ -520,10 +521,12 @@ class NutanixClient:
                     resp.read()
                     raise NutanixError(f"image download {url}: HTTP {resp.status_code}: {_error_text(resp)}",
                                        status=resp.status_code)
+                note = (f"HTTP {resp.status_code}, accept-ranges={resp.headers.get('accept-ranges') or '-'}, "
+                        f"content-range={resp.headers.get('content-range') or '-'}")
                 if resp.status_code == 206:
                     total = str(resp.headers.get("content-range") or "").rpartition("/")[2]
-                    return _int(total), True
-                return _int(resp.headers.get("content-length")), False
+                    return _int(total), True, note
+                return _int(resp.headers.get("content-length")), False, note
         except httpx.HTTPError as exc:
             raise NutanixError(f"image download {url}: {exc}") from exc
 

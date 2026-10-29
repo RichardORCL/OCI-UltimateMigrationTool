@@ -152,6 +152,7 @@ class FakeNutanix:
         self.vms = {vm.uuid: vm for vm in vms}
         self.flavor = flavor
         self.ranges = ranges
+        self.v08_ranges = False  # Prism Element v0.8 image file path answers range requests
         self.regions = regions  # v4 recovery points (pc) / protection domains + changed_regions (pe)
         self.fail_download = False
         self.requests: list[str] = []
@@ -194,7 +195,9 @@ class FakeNutanix:
         if auth != expected:
             return _json({"message_list": [{"message": "Authentication required"}]}, status=401)
         if path.startswith(V3 + "/images/") and path.endswith("/file"):
-            return self._file(request, path.split("/")[5])
+            return self._file(request, path.split("/")[5], self.ranges)
+        if path.startswith("/api/nutanix/v0.8/images/") and path.endswith("/file") and self.flavor == "pe":
+            return self._file(request, path.split("/")[5], self.v08_ranges)
         if path.startswith(DP) or path.startswith("/api/prism/v4.0/config/tasks/"):
             if self.flavor != "pc" or not self.regions:
                 return _json({"message": "not found"}, status=404)
@@ -483,7 +486,7 @@ class FakeNutanix:
         return _json({"message": f"no v2 route {method} {path}"}, status=404)
 
     # ------------------------------------------------------------- image file
-    def _file(self, request: httpx.Request, image_uuid: str) -> httpx.Response:
+    def _file(self, request: httpx.Request, image_uuid: str, ranges: bool) -> httpx.Response:
         image = self.images.get(image_uuid)
         if image is None:
             return _json({"message_list": [{"message": "image not found"}]}, status=404)
@@ -491,9 +494,10 @@ class FakeNutanix:
             return _json({"message_list": [{"message": "download failed"}]}, status=500)
         data = image["data"]
         header = request.headers.get("range") or ""
-        if not self.ranges or not header.startswith("bytes="):
-            with self._lock:
-                self.bytes_served += len(data)
+        if not ranges or not header.startswith("bytes="):
+            if not header:  # a range probe that gets the whole body is closed after the headers
+                with self._lock:
+                    self.bytes_served += len(data)
             return httpx.Response(200, content=data, headers={"content-length": str(len(data))})
         start_s, end_s = header.removeprefix("bytes=").split("-", 1)
         start = int(start_s)

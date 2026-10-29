@@ -11,6 +11,7 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import Callable, Optional
+from urllib.parse import urlsplit
 
 from helper_app.branding import PREFIX
 from helper_app.models import NutanixSourceInfo
@@ -32,6 +33,12 @@ class DiskImage:
     url: str
     size: int
     ranges: bool
+    probe: str = ""  # what each download URL answered to a range request
+
+
+def _short(url: str) -> str:
+    path = urlsplit(url).path
+    return path.split("/images/")[0] or path
 
 
 class NutanixDiskExport:
@@ -76,24 +83,29 @@ class NutanixDiskExport:
         if not image_uuid:
             raise NutanixError(f"Prism did not report the image created from vDisk {disk.uuid}")
         self._record(image_uuid)
-        size = 0
-        ranges = False
-        url = ""
+        # first URL that answers range reads, else the first that downloads at all
+        found: list[tuple[str, int, bool]] = []
+        notes: list[str] = []
         last: Optional[NutanixError] = None
         for candidate in self.client.image_file_urls(image_uuid):
             try:
-                size, ranges = self.client.probe_file(candidate)
-                url = candidate
-                break
+                size, ranges, note = self.client.probe_file(candidate)
             except NutanixError as exc:
                 if exc.status not in (404, 405):
                     raise
                 last = exc
-        if not url:
+                notes.append(f"{_short(candidate)}: HTTP {exc.status}")
+                continue
+            notes.append(f"{_short(candidate)}: {note}")
+            found.append((candidate, size, ranges))
+            if ranges:
+                break
+        if not found:
             raise last or NutanixError(f"image {image_uuid} has no download URL")
+        url, size, ranges = next((f for f in found if f[2]), found[0])
         if not size:
             size = self.client.image_size(image_uuid)
-        return DiskImage(uuid=image_uuid, url=url, size=size, ranges=ranges)
+        return DiskImage(uuid=image_uuid, url=url, size=size, ranges=ranges, probe="; ".join(notes))
 
     def map_regions(self, vm_uuid: str) -> dict[str, list[Extent]]:
         """Data extents per vDisk uuid (``RegionsUnavailable`` when Prism cannot say)."""

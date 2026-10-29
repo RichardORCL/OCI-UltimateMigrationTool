@@ -1210,6 +1210,7 @@ class MigrationRunner:
                 else:
                     mode = "one sequential stream" + (" (no range reads, so the region map is not used)"
                                                       if disk_regions is not None else "")
+                    mode += f" [range probe: {image.probe}]" if image.probe else ""
                 self._save(job, message=f"Copying {label} from image {image.uuid} on {job.nfc_host} to "
                                         f"{disk.device}: {size:,} bytes with {mode}")
                 progress = self._cloud_progress_callback(job, disk, meter, written_before)

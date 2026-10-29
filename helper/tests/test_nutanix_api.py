@@ -187,6 +187,20 @@ def test_nutanix_sparse_copy_on_prism_element(tmp_path, fast_retries, no_merge):
     assert sum(r == f"POST {fake_nutanix.V3}/data/changed_regions" for r in fleet.requests) > 1  # paged
 
 
+def test_nutanix_prism_element_prefers_a_download_path_with_ranges(tmp_path, fast_retries, no_merge):
+    env = make_env(tmp_path, flavor="pe", ranges=False)
+    env.nutanix.v08_ranges = True
+    with TestClient(env.app) as client:
+        nutanix_login(client)
+        response = client.post("/api/jobs/nutanix", json={
+            "vm_id": WIN, "target": target(windows_license_type="BRING_YOUR_OWN_LICENSE")})
+        job = wait_phase(client, response.json()["id"], "COMPLETED", "FAILED")
+    assert job["phase"] == "COMPLETED", job
+    assert env.nutanix.bytes_served < len(env.raws[0]) * 0.8
+    assert any(r.startswith("GET /api/nutanix/v0.8/images/") for r in env.nutanix.requests)
+    assert env.raws[0] in volume_contents(env)
+
+
 def test_nutanix_without_region_map_reads_full_disks(tmp_path, fast_retries, no_merge):
     env = make_env(tmp_path, regions=False)
     with TestClient(env.app) as client:
