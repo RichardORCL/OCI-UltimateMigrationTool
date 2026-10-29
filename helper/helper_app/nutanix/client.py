@@ -276,13 +276,23 @@ class NutanixClient:
             self.http.close()
 
     # ------------------------------------------------------------- plumbing
-    def request(self, method: str, path: str, *, json: Any = None, params: Optional[dict] = None) -> Any:
+    def request(self, method: str, path: str, *, json: Any = None, params: Optional[dict] = None,
+                headers: Optional[dict[str, str]] = None, basic_auth: bool = True) -> Any:
+        return self.request_with_headers(method, path, json=json, params=params, headers=headers,
+                                         basic_auth=basic_auth)[0]
+
+    def request_with_headers(self, method: str, path: str, *, json: Any = None, params: Optional[dict] = None,
+                             headers: Optional[dict[str, str]] = None,
+                             basic_auth: bool = True) -> tuple[Any, httpx.Headers]:
+        """``(json body, response headers)``. ``basic_auth=False`` sends only the given headers (session cookie)."""
         url = path if path.startswith("http") else self.base_url + path
-        headers = {"Accept": "application/json"}
+        path = urlsplit(url).path
+        sent = {"Accept": "application/json", **(headers or {})}
         if json is not None:
-            headers["Content-Type"] = "application/json"
+            sent["Content-Type"] = "application/json"
         try:
-            resp = self.http.request(method, url, json=json, params=params, headers=headers, auth=self._auth)
+            resp = self.http.request(method, url, json=json, params=params, headers=sent,
+                                     auth=self._auth if basic_auth else None)
         except httpx.HTTPError as exc:
             raise NutanixError(f"{method} {path}: {exc}") from exc
         if resp.status_code in (401, 403):
@@ -293,11 +303,11 @@ class NutanixClient:
             raise NutanixError(f"{method} {path}: HTTP {resp.status_code}: {_error_text(resp)}",
                                status=resp.status_code)
         if resp.status_code == 204 or not resp.content:
-            return {}
+            return {}, resp.headers
         try:
-            return resp.json()
+            return resp.json(), resp.headers
         except Exception:  # noqa: BLE001
-            return {}
+            return {}, resp.headers
 
     # ------------------------------------------------------------- login
     def detect(self) -> ApiFlavor:

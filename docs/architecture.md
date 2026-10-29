@@ -139,10 +139,15 @@ lowering it never interrupts a running one), the rest stay **QUEUED** ("Waiting 
      or `already_off`). `NutanixDiskExport` (`nutanix/export.py`) clones each vDisk into a temporary
      image (v3 `vm_disk` data source on Prism Central, v2 `vm_disk_clone` on Prism Element), waits for
      the Prism task up to `HELPER_NUTANIX_IMAGE_TIMEOUT_S`, and records the image uuid in
-     `Job.nutanix.image_uuids` before the download starts. `disk/nutanix_image_copy.py` reads the raw
-     image with parallel range requests when a `Range: bytes=0-0` probe answers 206
-     (`HELPER_NUTANIX_RANGE_WORKERS`, `HELPER_NUTANIX_CHUNK_BYTES`), otherwise as one sequential
-     stream; all-zero chunks are not written. The image is deleted after its disk is copied; any
+     `Job.nutanix.image_uuids` before the download starts. Before the first clone, `nutanix/regions.py`
+     maps the data regions of every disk (v4 recovery point and `compute-changed-regions` on Prism
+     Central, a temporary protection-domain snapshot and v3 `data/changed_regions` on Prism Element);
+     the recovery point or protection domain is recorded in `Job.nutanix.recovery_point_ids` /
+     `protection_domains` and removed right after, and `Job.nutanix.regions` says what was used.
+     `disk/nutanix_image_copy.py` reads the raw image with parallel range requests when a
+     `Range: bytes=0-0` probe answers 206 (`HELPER_NUTANIX_RANGE_WORKERS`, `HELPER_NUTANIX_CHUNK_BYTES`),
+     only the data regions when there is a map (holes under 1 MiB are read rather than skipped), otherwise
+     as one sequential stream; all-zero chunks are not written. The image is deleted after its disk is copied; any
      image still recorded is deleted by the source cleanup on failure or cancel.
    - **Azure jobs** (`MigrationRunner._run_azure`) replace the NFC part of this phase:
      - *deallocate* mode: a VM that is still running (or stopped but allocated) and whose job carries the

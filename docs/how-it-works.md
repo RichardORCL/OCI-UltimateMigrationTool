@@ -216,9 +216,21 @@ After the OCI side is prepared the tool:
   `POST /api/nutanix/v3/images` with a `vm_disk` data source; on Prism Element it is
   `POST v2.0/images` with `vm_disk_clone` into the disk's storage container. It waits for the task,
   up to `HELPER_NUTANIX_IMAGE_TIMEOUT_S`;
+- asks Prism, once the VM is off, which regions of each disk hold data, so empty space is not
+  downloaded (`HELPER_NUTANIX_SPARSE_COPY`, on by default):
+  - **Prism Central 2024.3 or later:** a crash-consistent recovery point of the VM (expiring after a
+    day as a safety net), `discover-cluster`, then `compute-changed-regions` for each disk recovery
+    point on the cluster it names. The recovery point is deleted as soon as the map is read.
+  - **Prism Element:** `data/changed_regions` only accepts protection-domain snapshots, so the tool
+    creates a protection domain `oci-umt-<job>-regions`, protects the VM, takes one out-of-band snapshot,
+    reads the regions, then deletes the snapshot, unprotects the VM and deletes the domain. A VM that is
+    already in another protection domain cannot be added, and is read in full.
+
+  Any failure here only means the disks are read in full; the job message and the diagnostics say why;
 - downloads the image as raw bytes over HTTPS (`GET /api/nutanix/v3/images/{uuid}/file`). When Prism
   answers range requests, `HELPER_NUTANIX_RANGE_WORKERS` workers read `HELPER_NUTANIX_CHUNK_BYTES`
-  ranges in parallel; otherwise one sequential stream is read. All-zero chunks are not written;
+  ranges in parallel: only the data regions when there is a map, the whole image otherwise. Without
+  range support one sequential stream reads the whole image. All-zero chunks are not written;
 - deletes the image when the disk is copied. Image uuids are recorded on the job, so a failed or
   cancelled job deletes the images it created. A leftover image with the same name from an earlier
   attempt is deleted before the clone.
@@ -234,9 +246,10 @@ sequenceDiagram
     B->>H: List VMs, inspect, start migration
     H->>OCI: Provision volumes on the tool VM
     H->>P: ACPI shutdown, then power off if still on
+    H->>P: Recovery point or protection-domain snapshot, changed regions, delete it
     loop each disk
         H->>P: Clone vDisk to a temporary image
-        P-->>H: Raw image download (HTTPS, ranges when supported)
+        P-->>H: Raw image download (data regions only, when ranges are supported)
         H->>H: Skip zero chunks, pwrite onto the volume
         H->>P: Delete the temporary image
     end
@@ -557,7 +570,7 @@ the *Maximum compatibility* preset (IDE + E1000) - see [limitations.md](limitati
 | Migration tool -> OLVM KVM hosts | TCP 54322 | Only with *Download the disks directly from the KVM host* (per migration). The engine chooses the host that serves the disk |
 | Migration tool -> Hyper-V host | TCP 5986 | Hyper-V source only: WinRM over HTTPS (inventory, power). HTTP on TCP 5985 when HTTPS is off at login |
 | Migration tool -> Hyper-V host (SMB) | TCP 445 | Hyper-V source only: read-only copy of the VHD/VHDX files, usually through the admin share. A disk that already lives on a UNC path is read from that server |
-| Migration tool -> Prism Central / Prism Element | TCP 9440 | Nutanix source only: Prism REST API (inventory, power, temporary images) and the raw image download |
+| Migration tool -> Prism Central / Prism Element | TCP 9440 | Nutanix source only: Prism REST API (inventory, power, temporary images, region maps) and the raw image download. With Prism Central, also the Prism Element address that `discover-cluster` returns |
 | Migration tool -> vCenter | TCP 443 | SOAP API and the NFC disk download (vCenter proxies ESXi by default) |
 | Migration tool -> ESXi hosts | TCP 443 | Only with *Download the disks directly from the ESXi host* (per migration) or `HELPER_NFC_HOST_OVERRIDE`; bypasses the vCenter proxy, usually several times faster |
 | Migration tool -> `login.microsoftonline.com`, `management.azure.com` | TCP 443 | Azure source only: Entra ID token, Azure Resource Manager (VM inventory, deallocate, snapshots, export SAS). Needs a NAT gateway or other internet route |

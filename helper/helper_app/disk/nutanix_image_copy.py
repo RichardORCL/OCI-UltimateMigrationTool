@@ -1,9 +1,10 @@
 """Copy a raw Prism image download onto a ``PositionalWriter``.
 
-A cloned AHV disk image is raw and downloads at its full size, zeros included. All-zero chunks
-are read but not written, because a fresh OCI volume already reads as zeros. When the server
-answers range requests, chunks are fetched by parallel workers and a failed chunk is retried
-on its own; otherwise the image is streamed once from the start.
+A cloned AHV disk image is raw and downloads at its full size, zeros included. With a region map
+from Prism (``nutanix/regions.py``) only the data extents are fetched. All-zero chunks are read but
+not written, because a fresh OCI volume already reads as zeros. When the server answers range
+requests, chunks are fetched by parallel workers and a failed chunk is retried on its own;
+otherwise the image is streamed once from the start.
 """
 
 from __future__ import annotations
@@ -36,11 +37,17 @@ def split_chunks(size: int, chunk_bytes: int) -> list[tuple[int, int]]:
     return [(off, min(chunk_bytes, size - off)) for off in range(0, size, chunk_bytes)]
 
 
+def split_extents(extents: list[tuple[int, int]], chunk_bytes: int) -> list[tuple[int, int]]:
+    return [(off + rel, min(chunk_bytes, length - rel))
+            for off, length in extents for rel in range(0, length, chunk_bytes)]
+
+
 def copy_ranges(
     fetch: Callable[[int, int], bytes],
     size: int,
     writer: PositionalWriter,
     *,
+    extents: Optional[list[tuple[int, int]]] = None,
     chunk_bytes: int = DEFAULT_CHUNK_BYTES,
     workers: int = 4,
     retries: int = DEFAULT_RETRIES,
@@ -48,9 +55,10 @@ def copy_ranges(
     on_progress: Optional[Callable[[int], None]] = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> CopyStats:
-    """Fetch ``size`` bytes with ``fetch(offset, length)`` range reads and write the non-zero chunks."""
+    """Fetch ``size`` bytes (or only ``extents``) with ``fetch(offset, length)`` range reads and write
+    the non-zero chunks."""
     stats = CopyStats()
-    chunks = split_chunks(size, chunk_bytes)
+    chunks = split_chunks(size, chunk_bytes) if extents is None else split_extents(extents, chunk_bytes)
     if not chunks:
         return stats
 

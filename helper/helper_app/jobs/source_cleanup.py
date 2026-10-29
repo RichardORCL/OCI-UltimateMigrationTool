@@ -15,7 +15,8 @@ def release_source(job: Job, session: UserSession | None, save: Callable[[Job], 
         "aws": (job.aws, release_aws, "AWS", ("snapshot_ids",)),
         "azure": (job.azure, release_azure, "Azure", ("sas_granted", "snapshot_ids")),
         "gcp": (job.gcp, release_gcp, "GCP", ("snapshot_names", "gcs_objects", "export_prefix")),
-        "nutanix": (job.nutanix, release_nutanix, "Nutanix", ("image_uuids",)),
+        "nutanix": (job.nutanix, release_nutanix, "Nutanix",
+                    ("image_uuids", "recovery_point_ids", "protection_domains")),
     }
     entry = providers.get(job.kind)
     if entry is None:

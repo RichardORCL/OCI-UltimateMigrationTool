@@ -59,6 +59,7 @@ from helper_app.nutanix.client import NutanixError
 from helper_app.nutanix.export import NutanixDiskExport
 from helper_app.nutanix.inventory import power_state as nutanix_power_state
 from helper_app.nutanix.power import shut_down as nutanix_shut_down
+from helper_app.nutanix.regions import merge_extents
 from helper_app.oci.clients import describe_error
 from helper_app.oci.iso_install import IsoInstaller
 from helper_app.oci.ova_export import OvaExporter
@@ -78,6 +79,7 @@ log = logging.getLogger(__name__)
 
 PROGRESS_SAVE_BYTES = 128 * 1024 * 1024
 PROGRESS_SAVE_SECONDS = 2.0  # also persist progress this often, so slow links still show movement
+REGION_MERGE_GAP = 1024 * 1024  # read small holes between Nutanix data regions rather than issue more requests
 # threads for migrations (running or waiting for a slot, bounded by the Setup page limit) plus headroom for
 # cleanups and finalize retries
 MAX_POOL_WORKERS = MAX_CONCURRENT_JOBS + 8
@@ -1125,6 +1127,7 @@ class MigrationRunner:
         export = NutanixDiskExport(client, job.id, info, image_timeout_s=self.s.nutanix_image_timeout_s,
                                    save=lambda: self.store.put(job), check_cancel=lambda: self._check_cancel(job))
         with export:
+            regions = self._nutanix_regions(job, export, info)
             job.transfer.started_at = job.transfer.started_at or utcnow()
             job.transfer.percent = 0
             self.store.put(job)
@@ -1133,13 +1136,13 @@ class MigrationRunner:
                     if disk.status == DiskStatus.COPIED:
                         continue
                     self._check_cancel(job)
-                    self._copy_nutanix_disk(job, disk, export, client)
+                    self._copy_nutanix_disk(job, disk, export, client, regions)
                 job.transfer.percent = 100
             finally:
                 job.transfer.finished_at = utcnow()
                 job.transfer.throughput_bps = 0.0
         job.step = "export_released"
-        self._save(job, message="Temporary Prism images deleted")
+        self._save(job, message="Temporary Prism images and snapshots deleted")
 
         self._check_cancel(job)
         self._guest_fixup(job)
@@ -1148,12 +1151,32 @@ class MigrationRunner:
         self.prov.finalize(job)
         self._save(job, message=f"Migration complete: instance {job.instance_id}")
 
-    def _copy_nutanix_disk(self, job: Job, disk: DiskState, export: NutanixDiskExport, client) -> None:
+    def _nutanix_regions(self, job: Job, export: NutanixDiskExport, info) -> dict[str, list[tuple[int, int]]]:
+        if not self.s.nutanix_sparse_copy:
+            info.regions = "full read (HELPER_NUTANIX_SPARSE_COPY is off)"
+            return {}
+        how = "a recovery point" if export.client.is_central else "a temporary protection domain snapshot"
+        job.step = "changed_regions"
+        self._save(job, message=f"Asking Prism which regions of the disks hold data ({how})")
+        try:
+            regions = export.map_regions(job.vm.moid)
+        except NutanixError as exc:
+            info.regions = f"full read: {exc}"
+            self._save(job, message=f"Prism gave no region map, reading the full disks: {exc}")
+            return {}
+        data = sum(length for extents in regions.values() for _, length in extents)
+        info.regions = f"changed regions from {how}: {data:,} bytes of data in {len(regions)} disk(s)"
+        self._save(job, message=f"Region map ready: {data:,} bytes of data in {len(regions)} disk(s)")
+        return regions
+
+    def _copy_nutanix_disk(self, job: Job, disk: DiskState, export: NutanixDiskExport, client,
+                           regions: Optional[dict[str, list[tuple[int, int]]]] = None) -> None:
         last_error: Optional[Exception] = None
         label = disk.label or f"disk {disk.index}"
         info = job.nutanix
         if info is None or disk.index >= len(info.disk_ids):
             raise ExportError(f"{label} has no vDisk uuid")
+        disk_regions = (regions or {}).get(info.disk_ids[disk.index])
         for attempt in range(1, self.s.disk_retry_attempts + 1):
             self._check_cancel(job)
             disk.attempts = attempt
@@ -1175,15 +1198,25 @@ class MigrationRunner:
                 image = export.open(disk.index)
                 size = min(image.size or disk.capacity_bytes, disk.capacity_bytes)
                 disk.stream_bytes = size or None
-                mode = (f"{self.s.nutanix_range_workers} parallel range readers" if image.ranges
-                        else "one sequential stream")
+                extents = None
+                if image.ranges and disk_regions is not None:
+                    extents = merge_extents(disk_regions, size, REGION_MERGE_GAP)
+                    disk.stream_bytes = sum(length for _, length in extents) or None
+                if extents is not None:
+                    mode = (f"{self.s.nutanix_range_workers} parallel range readers, "
+                            f"{disk.stream_bytes or 0:,} bytes of data")
+                elif image.ranges:
+                    mode = f"{self.s.nutanix_range_workers} parallel range readers"
+                else:
+                    mode = "one sequential stream" + (" (no range reads, so the region map is not used)"
+                                                      if disk_regions is not None else "")
                 self._save(job, message=f"Copying {label} from image {image.uuid} on {job.nfc_host} to "
                                         f"{disk.device}: {size:,} bytes with {mode}")
                 progress = self._cloud_progress_callback(job, disk, meter, written_before)
                 if image.ranges:
                     stats = copy_nutanix_ranges(
                         lambda off, length, url=image.url: client.read_range(url, off, length),
-                        size, writer, chunk_bytes=self.s.nutanix_chunk_bytes,
+                        size, writer, extents=extents, chunk_bytes=self.s.nutanix_chunk_bytes,
                         workers=self.s.nutanix_range_workers, retries=self.s.disk_retry_attempts,
                         check_cancel=lambda: self._check_cancel(job), on_progress=progress,
                     )

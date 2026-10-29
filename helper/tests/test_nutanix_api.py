@@ -3,6 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from . import fake_nutanix
 from .fake_nutanix import CLUSTER, PASSWORD, PRISM, PRISM_URL, STUCK, USER, VG, WEB, WIN, make_fleet
 from .test_api import login, target, wait_phase
 
@@ -132,6 +133,71 @@ def test_nutanix_hard_power_off(env):
     job = wait_phase(client, response.json()["id"], "COMPLETED", "FAILED")
     assert job["phase"] == "COMPLETED", job
     assert job["power_off_result"] == "powered_off" and env.nutanix.vms[STUCK].ops == ["OFF:ACPI", "OFF:HARD"]
+
+
+def volume_contents(env) -> set[bytes]:
+    atts = [a for a in env.fake.compute.vol_attachments.values() if a.instance_id == env.fake.identity.instance_id]
+    return {open(a.device or a.fake_disk, "rb").read() for a in atts}
+
+
+@pytest.fixture
+def no_merge(monkeypatch):
+    from helper_app.jobs import runner
+
+    monkeypatch.setattr(runner, "REGION_MERGE_GAP", 0)  # the test disks alternate 64 KiB data and zero grains
+
+
+def test_nutanix_sparse_copy_on_prism_central(env, no_merge):
+    client = env.client
+    nutanix_login(client)
+    response = client.post("/api/jobs/nutanix", json={"vm_id": WEB, "target": target(), "power_off_source": True})
+    assert response.status_code == 202, response.text
+    job = wait_phase(client, response.json()["id"], "COMPLETED", "FAILED")
+    assert job["phase"] == "COMPLETED", job
+    fleet = env.nutanix
+    total = len(env.raws[0]) + len(env.raws[1])
+    assert job["nutanix"]["regions"].startswith("changed regions from a recovery point"), job["nutanix"]
+    assert fleet.bytes_served < total * 0.8  # zero grains and the zero tail were never downloaded
+    assert all(d["stream_bytes"] < d["capacity_bytes"] for d in job["disks"])
+    assert env.raws[0] in volume_contents(env) and env.raws[1] in volume_contents(env)
+    assert fleet.recovery_points == {} and len(fleet.recovery_points_deleted) == 1
+    assert job["nutanix"]["recovery_point_ids"] == [] and fleet.images == {}
+    # discover-cluster is only on v4.3 here, and compute-changed-regions only answers on the cluster
+    assert any("/v4.3/" in r and r.endswith("discover-cluster") for r in fleet.requests)
+    assert any(r.endswith("compute-changed-regions") and "/v4.3/" in r for r in fleet.requests)
+    assert "nutanix regions: sparse_copy=True changed regions" in client.get(
+        f"/api/jobs/{job['id']}/diagnostics").text
+
+
+def test_nutanix_sparse_copy_on_prism_element(tmp_path, fast_retries, no_merge):
+    env = make_env(tmp_path, flavor="pe", ranges=True)
+    with TestClient(env.app) as client:
+        nutanix_login(client)
+        response = client.post("/api/jobs/nutanix", json={
+            "vm_id": WIN, "target": target(windows_license_type="BRING_YOUR_OWN_LICENSE")})
+        assert response.status_code == 202, response.text
+        job = wait_phase(client, response.json()["id"], "COMPLETED", "FAILED")
+    assert job["phase"] == "COMPLETED", job
+    fleet = env.nutanix
+    assert job["nutanix"]["regions"].startswith("changed regions from a temporary protection domain"), job
+    assert fleet.bytes_served < len(env.raws[0]) * 0.8
+    assert env.raws[0] in volume_contents(env)
+    assert fleet.protection_domains == {} and len(fleet.protection_domains_deleted) == 1
+    assert job["nutanix"]["protection_domains"] == []
+    assert sum(r == f"POST {fake_nutanix.V3}/data/changed_regions" for r in fleet.requests) > 1  # paged
+
+
+def test_nutanix_without_region_map_reads_full_disks(tmp_path, fast_retries, no_merge):
+    env = make_env(tmp_path, regions=False)
+    with TestClient(env.app) as client:
+        nutanix_login(client)
+        response = client.post("/api/jobs/nutanix", json={
+            "vm_id": WIN, "target": target(windows_license_type="BRING_YOUR_OWN_LICENSE")})
+        job = wait_phase(client, response.json()["id"], "COMPLETED", "FAILED")
+    assert job["phase"] == "COMPLETED", job
+    assert job["nutanix"]["regions"].startswith("full read:") and "pc.2024.3" in job["nutanix"]["regions"]
+    assert env.nutanix.bytes_served >= len(env.raws[0])
+    assert env.raws[0] in volume_contents(env)
 
 
 def test_nutanix_failed_download_deletes_images(env):

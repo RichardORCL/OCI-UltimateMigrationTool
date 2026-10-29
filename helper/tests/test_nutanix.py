@@ -4,14 +4,15 @@ import httpx
 import pytest
 
 from helper_app.config import Settings
-from helper_app.disk.nutanix_image_copy import NutanixCopyError, copy_ranges, copy_stream, is_zero
+from helper_app.disk.nutanix_image_copy import NutanixCopyError, copy_ranges, copy_stream, is_zero, split_extents
 from helper_app.models import Firmware, NutanixSourceInfo
 from helper_app.nutanix.client import NutanixAuthError, NutanixError, normalize_v2_vm, normalize_v3_vm, parse_prism_url
-from helper_app.nutanix.export import NutanixDiskExport, image_name
+from helper_app.nutanix.export import NutanixDiskExport, image_name, release_nutanix_resources
 from helper_app.nutanix.inventory import guest_os_from_vm, inspect_vm, preflight, vm_spec_from_ahv, warnings
 from helper_app.nutanix.power import shut_down
+from helper_app.nutanix.regions import RegionsUnavailable, merge_extents, snapshot_paths
 
-from .fake_nutanix import CDONLY, CLUSTER, PASSWORD, PRISM_URL, STUCK, USER, VG, WEB, WIN, make_fleet
+from .fake_nutanix import CDONLY, CLUSTER, PASSWORD, PRISM_URL, STUCK, USER, VG, WEB, WIN, data_regions, make_fleet
 
 RAWS = {0: b"\x01" * 4096 + b"\x00" * 8192 + b"\x02" * 4096, 1: b"\x00" * 4096 + b"\x03" * 4096}
 
@@ -162,6 +163,77 @@ def test_disk_export_replaces_a_stale_image():
         second = export.open(0)
         assert first.uuid in fleet.images_deleted and second.uuid in fleet.images
     assert fleet.images == {}
+
+
+@pytest.mark.parametrize("flavor", ["pc", "pe"])
+def test_region_map_matches_the_disk_data(flavor):
+    fleet = make_fleet(RAWS, flavor=flavor)
+    client = client_for(fleet)
+    client.detect()
+    info = NutanixSourceInfo(prism_host="prism.test", api=flavor, disk_ids=["vd-web-os", "vd-web-data"],
+                             container_uuids=["ctr-1", "ctr-1"])
+    with NutanixDiskExport(client, "job12345678", info, image_timeout_s=5, save=lambda: None) as export:
+        regions = export.map_regions(WEB)
+    for index, disk_id in enumerate(info.disk_ids):
+        expected = [(r["offset"], r["length"]) for r in data_regions(RAWS[index]) if r["type"] == "REGULAR"]
+        assert merge_extents(regions[disk_id], len(RAWS[index]), 0) == expected
+        rebuilt = bytearray(len(RAWS[index]))
+        for off, length in regions[disk_id]:
+            rebuilt[off:off + length] = RAWS[index][off:off + length]
+        assert bytes(rebuilt) == RAWS[index]  # nothing outside the regions holds data
+    assert info.recovery_point_ids == [] and info.protection_domains == []
+    assert fleet.recovery_points == {} and fleet.protection_domains == {}
+
+
+def test_region_map_unavailable_leaves_nothing_behind():
+    fleet = make_fleet(RAWS, regions=False)
+    client = client_for(fleet)
+    client.detect()
+    info = NutanixSourceInfo(prism_host="prism.test", disk_ids=["vd-web-os"])
+    with pytest.raises(RegionsUnavailable, match="pc.2024.3"):
+        NutanixDiskExport(client, "job12345678", info, image_timeout_s=5, save=lambda: None).map_regions(WEB)
+    assert info.recovery_point_ids == []
+
+
+def test_release_removes_left_over_recovery_points_and_protection_domains():
+    pc = make_fleet(RAWS)
+    client = client_for(pc)
+    client.detect()
+    rp_body = {"vmRecoveryPoints": [{"vmExtId": WEB}], "expirationTime": "2026-10-30T00:00:00Z"}
+    client.request("POST", "/api/dataprotection/v4.0/config/recovery-points", json=rp_body,
+                   headers={"NTNX-Request-Id": "r1"})
+    rp_id = next(iter(pc.recovery_points))
+    info = NutanixSourceInfo(prism_host="prism.test", recovery_point_ids=[rp_id, "gone"])
+    actions = release_nutanix_resources(client, info)
+    assert f"ok: deleted recovery point {rp_id}" in actions and pc.recovery_points == {}
+    assert info.recovery_point_ids == []
+
+    pe = make_fleet(RAWS, flavor="pe")
+    client = client_for(pe)
+    client.detect()
+    client.request("POST", "/PrismGateway/services/rest/v2.0/protection_domains/", json={"value": "oci-umt-x"})
+    client.request("POST", "/PrismGateway/services/rest/v2.0/protection_domains/oci-umt-x/protect_vms",
+                   json={"uuids": [WIN]})
+    client.request("POST", "/PrismGateway/services/rest/v2.0/protection_domains/oci-umt-x/oob_schedules", json={})
+    info = NutanixSourceInfo(prism_host="prism.test", api="pe", protection_domains=["oci-umt-x"])
+    actions = release_nutanix_resources(client, info)
+    assert "ok: deleted protection domain oci-umt-x" in actions and not [a for a in actions if "failed" in a]
+    assert pe.protection_domains == {} and info.protection_domains == []
+
+
+def test_merge_and_split_extents():
+    assert merge_extents([(100, 50), (0, 10), (10, 5), (5000, 10)], 1000, 0) == [(0, 15), (100, 50)]
+    assert merge_extents([(0, 10), (30, 10)], 0, 20) == [(0, 40)]
+    assert split_extents([(0, 10), (100, 25)], 10) == [(0, 10), (100, 10), (110, 10), (120, 5)]
+
+
+def test_snapshot_paths_prefer_listed_paths():
+    listed = "/ctr/.snapshot/05/1-2-70839205/.acropolis/vmdisk/vd1"
+    assert snapshot_paths({"files": [listed]}, "vd1", "ctr", "1", "2", "70839205")[0] == listed
+    assert snapshot_paths({}, "vd1", "ctr", "1", "2", "70839205") == [
+        "/ctr/.snapshot/05/1-2-70839205/.acropolis/vmdisk/vd1", "/ctr/.snapshot/5/1-2-70839205/.acropolis/vmdisk/vd1"]
+    with pytest.raises(RegionsUnavailable):
+        snapshot_paths({}, "vd1", "", "1", "2", "70839205")
 
 
 def test_is_zero():

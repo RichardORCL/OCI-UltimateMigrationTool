@@ -119,6 +119,9 @@ def _source_lines(job: Job, settings: Settings) -> list[str]:
             f"disks={','.join(n.disk_ids) or '-'} images_left={','.join(n.image_uuids) or '-'} "
             f"range_workers={settings.nutanix_range_workers} chunk_bytes={settings.nutanix_chunk_bytes} "
             f"download_host={job.nfc_host or '-'}",
+            f"  nutanix regions: sparse_copy={settings.nutanix_sparse_copy} {n.regions or '-'} "
+            f"recovery_points_left={','.join(n.recovery_point_ids) or '-'} "
+            f"protection_domains_left={','.join(n.protection_domains) or '-'}",
             _fixup_lines(job),
         ]
     if job.vm is not None and job.hyperv is not None:

@@ -546,6 +546,12 @@ class NutanixSourceInfo(BaseModel):
                                        description="Storage container of each vDisk, in DiskSpec order")
     image_uuids: list[str] = Field(default_factory=list,
                                    description="Temporary images created by this job and not deleted yet")
+    recovery_point_ids: list[str] = Field(
+        default_factory=list, description="Prism Central recovery points taken for the region map, not deleted yet")
+    protection_domains: list[str] = Field(
+        default_factory=list,
+        description="Prism Element protection domains created for the region map, not deleted yet")
+    regions: str = Field(default="", description="How the data regions were found, or why the full disks are read")
 
 
 class HypervSourceInfo(BaseModel):

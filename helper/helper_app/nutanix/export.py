@@ -15,6 +15,7 @@ from typing import Callable, Optional
 from helper_app.branding import PREFIX
 from helper_app.models import NutanixSourceInfo
 from helper_app.nutanix.client import AhvDisk, NutanixClient, NutanixError
+from helper_app.nutanix.regions import Extent, RegionMapper, release_region_resources
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +95,12 @@ class NutanixDiskExport:
             size = self.client.image_size(image_uuid)
         return DiskImage(uuid=image_uuid, url=url, size=size, ranges=ranges)
 
+    def map_regions(self, vm_uuid: str) -> dict[str, list[Extent]]:
+        """Data extents per vDisk uuid (``RegionsUnavailable`` when Prism cannot say)."""
+        mapper = RegionMapper(self.client, self.job_id, self.info, timeout_s=self.image_timeout_s,
+                              save=self._save, check_cancel=self._check)
+        return mapper.map(vm_uuid, list(self.info.disk_ids))
+
     def finish(self, image: DiskImage) -> None:
         self._delete(image.uuid)
 
@@ -118,8 +125,9 @@ class NutanixDiskExport:
 
 
 def release_nutanix_resources(client: NutanixClient, info: NutanixSourceInfo) -> list[str]:
-    """Delete every temporary image recorded on ``info``. Best effort; leftovers stay listed."""
-    actions: list[str] = []
+    """Delete every temporary image, recovery point and protection domain recorded on ``info``.
+    Best effort; leftovers stay listed."""
+    actions: list[str] = release_region_resources(client, info)
     for image_uuid in list(info.image_uuids):
         if not image_uuid:
             info.image_uuids.remove(image_uuid)

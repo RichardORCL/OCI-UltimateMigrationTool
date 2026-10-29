@@ -88,6 +88,9 @@ class Settings(BaseSettings):
     nutanix_image_timeout_s: int = 3600  # wait for the vDisk-to-image clone task, per disk
     nutanix_range_workers: int = 4
     nutanix_chunk_bytes: int = 8 * 1024 * 1024
+    # read only the regions that hold data: a recovery point (Prism Central 2024.3+) or a temporary
+    # protection-domain snapshot (Prism Element) is asked for its changed regions, then deleted
+    nutanix_sparse_copy: bool = True
 
     # Logging (both adjustable from the Setup page; changes persist in runtime_settings_path)
     log_level: str = "INFO"

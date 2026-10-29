@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import itertools
 import json
 import threading
 import uuid
@@ -29,10 +30,32 @@ STUCK = "aaaaaaaa-0000-0000-0000-000000000005"
 
 V3 = "/api/nutanix/v3"
 V2 = "/PrismGateway/services/rest/v2.0"
+DP = "/api/dataprotection/"
+CLUSTER_IP = "10.0.0.9"  # Prism Element address that discover-cluster hands out
+JWT = "fake-igw-session"
+CLUSTER_ID = "1234567890"
+INCARNATION = "1600000000000000"
+CONTAINER = "default-container"
+REGION_BLOCK = 64 * 1024
+REGION_PAGE = 3  # regions per changed-regions answer, so callers have to page
 
 
-def _json(body, status: int = 200) -> httpx.Response:
-    return httpx.Response(status, json=body)
+def _json(body, status: int = 200, headers: Optional[dict] = None) -> httpx.Response:
+    return httpx.Response(status, json=body, headers=headers)
+
+
+def data_regions(data: bytes, start: int = 0) -> list[dict]:
+    """REGULAR/ZEROED regions of ``data`` from ``start`` in REGION_BLOCK steps; the zero tail is left out."""
+    regions: list[dict] = []
+    end = len(data.rstrip(b"\0"))
+    for off in range(start - start % REGION_BLOCK, end, REGION_BLOCK):
+        kind = "ZEROED" if not data[off:off + REGION_BLOCK].strip(b"\0") else "REGULAR"
+        length = min(REGION_BLOCK, len(data) - off)
+        if regions and regions[-1]["type"] == kind:
+            regions[-1]["length"] += length
+        else:
+            regions.append({"offset": off, "length": length, "type": kind})
+    return regions
 
 
 class FakeDisk:
@@ -125,15 +148,22 @@ class FakeVm:
 
 
 class FakeNutanix:
-    def __init__(self, vms: list[FakeVm], *, flavor: str = "pc", ranges: bool = True):
+    def __init__(self, vms: list[FakeVm], *, flavor: str = "pc", ranges: bool = True, regions: bool = True):
         self.vms = {vm.uuid: vm for vm in vms}
         self.flavor = flavor
         self.ranges = ranges
+        self.regions = regions  # v4 recovery points (pc) / protection domains + changed_regions (pe)
         self.fail_download = False
         self.requests: list[str] = []
+        self.bytes_served = 0
         self.images: dict[str, dict] = {}  # uuid -> {"name", "data"}
         self.images_created: list[str] = []
         self.images_deleted: list[str] = []
+        self.recovery_points: dict[str, dict] = {}  # rp -> {"vm", "vmrp", "disks": {drp: vdisk}}
+        self.recovery_points_deleted: list[str] = []
+        self.protection_domains: dict[str, dict] = {}  # name -> {"vms": [uuid], "snapshots": [id]}
+        self.protection_domains_deleted: list[str] = []
+        self.snapshot_ids = itertools.count(70839205)
         self._tasks: dict[str, dict] = {}
         self._lock = threading.Lock()
         self.transport = httpx.MockTransport(self.handle)
@@ -151,13 +181,28 @@ class FakeNutanix:
         self.requests.append(f"{request.method} {path}")
         if request.url.port != 9440:
             return httpx.Response(502, text="wrong port")
+        body = json.loads(request.content.decode() or "{}") if request.content else {}
+        if request.url.host == CLUSTER_IP:
+            if (request.headers.get("cookie") != f"NTNX_IGW_SESSION={JWT}"
+                    or request.headers.get("authorization")):
+                return _json({"message": "Intent Gateway Login Required"}, status=401)
+            if not path.endswith("/$actions/compute-changed-regions"):
+                return _json({"message": f"no cluster route {path}"}, status=404)
+            return self._changed_regions_v4(path, body)
         auth = request.headers.get("authorization") or ""
         expected = "Basic " + base64.b64encode(f"{USER}:{PASSWORD}".encode()).decode()
         if auth != expected:
             return _json({"message_list": [{"message": "Authentication required"}]}, status=401)
-        body = json.loads(request.content.decode() or "{}") if request.content else {}
         if path.startswith(V3 + "/images/") and path.endswith("/file"):
             return self._file(request, path.split("/")[5])
+        if path.startswith(DP) or path.startswith("/api/prism/v4.0/config/tasks/"):
+            if self.flavor != "pc" or not self.regions:
+                return _json({"message": "not found"}, status=404)
+            return self._v4(request, path, body)
+        if path == V3 + "/data/changed_regions":
+            if self.flavor != "pe" or not self.regions:
+                return _json({"message": "not found"}, status=404)
+            return self._changed_regions_v3(body)
         if path.startswith(V3):
             return self._v3(request.method, path[len(V3):], body)
         if path.startswith(V2):
@@ -254,10 +299,138 @@ class FakeNutanix:
                           "entity_reference_list": [{"uuid": u} for u in task["entities"]]})
         return _json({"message": f"no v3 route {method} {path}"}, status=404)
 
+    # ------------------------------------------------------------- v4 data protection (Prism Central)
+    def _v4(self, request: httpx.Request, path: str, body: dict) -> httpx.Response:
+        method = request.method
+        if method != "GET" and not request.headers.get("ntnx-request-id"):
+            return _json({"message": "NTNX-Request-Id header is required"}, status=400)
+        if method == "GET" and path.startswith("/api/prism/v4.0/config/tasks/"):
+            task = self._tasks.get(path.rsplit("/", 1)[1])
+            if task is None:
+                return _json({"message": "task not found"}, status=404)
+            return _json({"data": {"status": "SUCCEEDED", "entitiesAffected": task["entities"]}})
+        rps = "/api/dataprotection/v4.0/config/recovery-points"
+        if method == "POST" and path == rps:
+            vm_uuid = body["vmRecoveryPoints"][0]["vmExtId"]
+            vm = self.vms.get(vm_uuid)
+            if vm is None or not body.get("expirationTime"):
+                return _json({"message": "bad recovery point request"}, status=400)
+            rp_id = str(uuid.uuid4())
+            with self._lock:
+                self.recovery_points[rp_id] = {
+                    "vm": vm_uuid, "vmrp": str(uuid.uuid4()),
+                    "disks": {str(uuid.uuid4()): d.uuid for d in vm.disks if not d.cdrom}}
+            task = "ZXJnb24=:" + uuid.uuid4().hex
+            with self._lock:
+                self._tasks[task] = {"entities": [{"extId": vm_uuid, "rel": "vmm:ahv:config:vm"},
+                                                  {"extId": rp_id, "rel": "dataprotection:config:recovery-point"}]}
+            return _json({"data": {"extId": task}}, status=202)
+        if path.startswith(rps + "/"):
+            rp_id = path[len(rps) + 1:]
+            rp = self.recovery_points.get(rp_id)
+            if rp is None:
+                return _json({"message": "recovery point not found"}, status=404)
+            etag = f'"rp-{rp_id[:8]}"'
+            if method == "GET":
+                disks = [{"diskRecoveryPointExtId": drp, "diskExtId": vd} for drp, vd in rp["disks"].items()]
+                return _json({"data": {"extId": rp_id, "vmRecoveryPoints": [
+                    {"extId": rp["vmrp"], "vmExtId": rp["vm"], "diskRecoveryPoints": disks}]}},
+                    headers={"ETag": etag})
+            if method == "DELETE":
+                if request.headers.get("if-match") != etag:
+                    return _json({"message": "If-Match is required"}, status=428)
+                with self._lock:
+                    self.recovery_points.pop(rp_id, None)
+                    self.recovery_points_deleted.append(rp_id)
+                return _json({"data": {"extId": "ZXJnb24=:" + uuid.uuid4().hex}}, status=202)
+        if method == "POST" and path.endswith("/$actions/discover-cluster"):
+            if not path.startswith("/api/dataprotection/v4.3/"):
+                return _json({"message": "not found"}, status=404)
+            return _json({"data": {"jwtToken": JWT, "clusterIp": {"ipv4": {"value": CLUSTER_IP}}}})
+        if method == "POST" and path.endswith("/$actions/compute-changed-regions"):
+            return _json({"message": "send compute-changed-regions to the cluster from discover-cluster"},
+                         status=400)
+        return _json({"message": f"no v4 route {method} {path}"}, status=404)
+
+    def _changed_regions_v4(self, path: str, body: dict) -> httpx.Response:
+        parts = path.split("/")
+        rp = self.recovery_points.get(parts[parts.index("recovery-points") + 1])
+        if rp is None or rp["vmrp"] != parts[parts.index("vm-recovery-points") + 1]:
+            return _json({"message": "recovery point not found"}, status=404)
+        disk = self._disk(rp["disks"].get(parts[parts.index("disk-recovery-points") + 1], ""))
+        if disk is None:
+            return _json({"message": "disk recovery point not found"}, status=404)
+        regions = data_regions(disk.data, int(body.get("offset") or 0))[:REGION_PAGE]
+        return _json({"data": [{"offset": r["offset"], "length": r["length"], "regionType": r["type"]}
+                               for r in regions]})
+
+    # ------------------------------------------------------------- protection domains (Prism Element)
+    def _pd_path(self, snapshot: int, disk_uuid: str) -> str:
+        return (f"/{CONTAINER}/.snapshot/{snapshot % 100}/{CLUSTER_ID}-{INCARNATION}-{snapshot}"
+                f"/.acropolis/vmdisk/{disk_uuid}")
+
+    def _changed_regions_v3(self, body: dict) -> httpx.Response:
+        wanted = body.get("snapshot_file_path")
+        for pd in self.protection_domains.values():
+            for snapshot in pd["snapshots"]:
+                for vm_uuid in pd["vms"]:
+                    for disk in self.vms[vm_uuid].disks:
+                        if wanted == self._pd_path(snapshot, disk.uuid):
+                            start = int(body.get("start_offset") or 0)
+                            regions = data_regions(disk.data, start)
+                            page = regions[:REGION_PAGE]
+                            nxt = page[-1]["offset"] + page[-1]["length"] if len(regions) > REGION_PAGE else 0
+                            return _json({"file_size": len(disk.data), "next_offset": nxt,
+                                          "region_list": page})
+        return _json({"message_list": [{"message": f"invalid snapshot file path {wanted}"}]}, status=400)
+
+    def _protection_domains(self, method: str, parts: list[str], body) -> httpx.Response:
+        if method == "POST" and len(parts) == 2:
+            name = body["value"]
+            if name in self.protection_domains:
+                return _json({"message": "protection domain exists"}, status=400)
+            self.protection_domains[name] = {"vms": [], "snapshots": []}
+            return _json({"value": True})
+        pd = self.protection_domains.get(parts[2])
+        if pd is None:
+            return _json({"message": "protection domain not found"}, status=404)
+        action = parts[3:]
+        if method == "GET" and not action:
+            return _json({"name": parts[2], "vms": [{"vm_name": self.vms[u].name} for u in pd["vms"]]})
+        if method == "DELETE" and not action:
+            if pd["vms"]:
+                return _json({"message": "protection domain still protects VMs"}, status=400)
+            del self.protection_domains[parts[2]]
+            self.protection_domains_deleted.append(parts[2])
+            return _json({"value": True})
+        if method == "POST" and action == ["protect_vms"]:
+            added = [u for u in body["uuids"] if u in self.vms]
+            pd["vms"].extend(added)
+            return _json([{"vm_name": self.vms[u].name} for u in added])
+        if method == "POST" and action == ["unprotect_vms"]:
+            pd["vms"] = [u for u in pd["vms"] if self.vms[u].name not in body]
+            return _json([{"vm_name": n} for n in body])
+        if method == "POST" and action == ["oob_schedules"]:
+            pd["snapshots"].append(next(self.snapshot_ids))
+            return _json({"schedule_id": 1})
+        if method == "GET" and action == ["dr_snapshots"]:
+            return _json({"entities": [{"snapshot_id": str(s), "state": "AVAILABLE"} for s in pd["snapshots"]]})
+        if method == "DELETE" and action[:1] == ["dr_snapshots"] and len(action) == 2:
+            pd["snapshots"] = [s for s in pd["snapshots"] if str(s) != action[1]]
+            return _json({"value": True})
+        return _json({"message": f"no protection domain route {method} {'/'.join(parts)}"}, status=404)
+
     # ------------------------------------------------------------- v2
     def _v2(self, method: str, path: str, body: dict) -> httpx.Response:
         if method == "GET" and path == "/cluster":
-            return _json({"name": CLUSTER, "uuid": CLUSTER_UUID})
+            return _json({"name": CLUSTER, "uuid": CLUSTER_UUID, "id": f"{CLUSTER_UUID}::{CLUSTER_ID}",
+                          "cluster_incarnation_id": int(INCARNATION)})
+        if path.startswith("/protection_domains"):
+            if not self.regions:
+                return _json({"message": "not found"}, status=404)
+            return self._protection_domains(method, path.split("/"), body)
+        if method == "GET" and path == "/storage_containers/ctr-1":
+            return _json({"name": CONTAINER, "storage_container_uuid": "ctr-1"})
         if method == "GET" and path == "/networks":
             return _json({"entities": [{"uuid": SUBNET_UUID, "name": "vlan0"}]})
         if method == "GET" and path == "/vms":
@@ -319,10 +492,14 @@ class FakeNutanix:
         data = image["data"]
         header = request.headers.get("range") or ""
         if not self.ranges or not header.startswith("bytes="):
+            with self._lock:
+                self.bytes_served += len(data)
             return httpx.Response(200, content=data, headers={"content-length": str(len(data))})
         start_s, end_s = header.removeprefix("bytes=").split("-", 1)
         start = int(start_s)
         end = int(end_s) if end_s else len(data) - 1
+        with self._lock:
+            self.bytes_served += len(data[start:end + 1])
         return httpx.Response(206, content=data[start:end + 1],
                               headers={"content-range": f"bytes {start}-{end}/{len(data)}", "accept-ranges": "bytes"})
 
@@ -334,7 +511,8 @@ class FakeNutanix:
         return None
 
 
-def make_fleet(raws: dict[int, bytes], *, flavor: str = "pc", ranges: bool = True) -> FakeNutanix:
+def make_fleet(raws: dict[int, bytes], *, flavor: str = "pc", ranges: bool = True,
+               regions: bool = True) -> FakeNutanix:
     return FakeNutanix([
         FakeVm(WEB, "web-01", [
             FakeDisk("vd-web-os", raws[0], adapter="SCSI", index=0),
@@ -346,4 +524,4 @@ def make_fleet(raws: dict[int, bytes], *, flavor: str = "pc", ranges: bool = Tru
         FakeVm(VG, "vg-01", [FakeDisk("vd-vg", raws[0], volume_group=True)], power="OFF"),
         FakeVm(CDONLY, "cd-01", [FakeDisk("vd-cd", b"", adapter="IDE", cdrom=True)], power="OFF"),
         FakeVm(STUCK, "stuck-01", [FakeDisk("vd-stuck", raws[1])], power="ON", ignores_acpi=True),
-    ], flavor=flavor, ranges=ranges)
+    ], flavor=flavor, ranges=ranges, regions=regions)
