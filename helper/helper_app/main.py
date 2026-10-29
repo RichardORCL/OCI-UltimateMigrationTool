@@ -24,6 +24,7 @@ from helper_app.api import (
     routes_hyperv_vms,
     routes_instances,
     routes_jobs,
+    routes_nutanix_vms,
     routes_oci,
     routes_olvm_vms,
     routes_setup,
@@ -39,6 +40,7 @@ from helper_app.gcp.session import GcpConnector
 from helper_app.hyperv.session import HypervConnector
 from helper_app.jobs.runner import MigrationRunner
 from helper_app.jobs.store import JobStore
+from helper_app.nutanix.session import NutanixConnector
 from helper_app.oci.clients import OciClients, build_clients
 from helper_app.oci.provision import Provisioner
 from helper_app.olvm.session import OlvmConnector
@@ -61,6 +63,7 @@ def create_app(
     aws: Optional[AwsConnector] = None,
     olvm: Optional[OlvmConnector] = None,
     hyperv: Optional[HypervConnector] = None,
+    nutanix: Optional[NutanixConnector] = None,
     export_factory=None,
     updater: Optional[Updater] = None,
     command_runner: Runner = _default_runner,
@@ -88,6 +91,7 @@ def create_app(
         app.state.aws = aws or AwsConnector(settings)
         app.state.olvm = olvm or OlvmConnector(settings)
         app.state.hyperv = hyperv or HypervConnector(settings)
+        app.state.nutanix = nutanix or NutanixConnector(settings)
         app.state.sessions = SessionStore(settings.session_ttl_s)
         app.state.ui_password = UiPasswordStore(settings.ui_password_hash_path)
         app.state.command_runner = command_runner  # runs git/systemctl/journalctl (injectable for tests)
@@ -123,6 +127,7 @@ def create_app(
     app.include_router(routes_aws_vms.router)
     app.include_router(routes_olvm_vms.router)
     app.include_router(routes_hyperv_vms.router)
+    app.include_router(routes_nutanix_vms.router)
     app.include_router(routes_jobs.router)
     app.include_router(routes_console.router)
     app.include_router(routes_oci.router)

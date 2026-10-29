@@ -81,6 +81,14 @@ class Settings(BaseSettings):
     hyperv_range_workers: int = 4
     hyperv_range_chunk_bytes: int = 8 * 1024 * 1024
 
+    # Nutanix AHV source: Prism (TCP 9440) for inventory and power. After the VM is shut down each
+    # vDisk is cloned to a temporary image, downloaded raw over HTTPS (zero chunks are not written),
+    # then the image is deleted. The storage container needs room for one disk clone at a time.
+    nutanix_shutdown_timeout_s: int = 300
+    nutanix_image_timeout_s: int = 3600  # wait for the vDisk-to-image clone task, per disk
+    nutanix_range_workers: int = 4
+    nutanix_chunk_bytes: int = 8 * 1024 * 1024
+
     # Logging (both adjustable from the Setup page; changes persist in runtime_settings_path)
     log_level: str = "INFO"
     oci_log_requests: bool = False  # enable redacted OCI SDK diagnostic logging at DEBUG (no raw wire dumps)

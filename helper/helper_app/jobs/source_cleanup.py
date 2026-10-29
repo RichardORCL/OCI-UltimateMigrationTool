@@ -6,6 +6,7 @@ from helper_app.aws.export import release_aws_resources as release_aws
 from helper_app.azure.export import release_azure_resources as release_azure
 from helper_app.gcp.export import release_gcp_resources as release_gcp
 from helper_app.models import Job
+from helper_app.nutanix.export import release_nutanix_resources as release_nutanix
 from helper_app.sessions import UserSession
 
 
@@ -14,6 +15,7 @@ def release_source(job: Job, session: UserSession | None, save: Callable[[Job], 
         "aws": (job.aws, release_aws, "AWS", ("snapshot_ids",)),
         "azure": (job.azure, release_azure, "Azure", ("sas_granted", "snapshot_ids")),
         "gcp": (job.gcp, release_gcp, "GCP", ("snapshot_names", "gcs_objects", "export_prefix")),
+        "nutanix": (job.nutanix, release_nutanix, "Nutanix", ("image_uuids",)),
     }
     entry = providers.get(job.kind)
     if entry is None:

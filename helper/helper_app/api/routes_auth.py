@@ -24,9 +24,11 @@ from helper_app.models import (
     GcpLoginRequest,
     HypervLoginRequest,
     LoginRequest,
+    NutanixLoginRequest,
     OlvmLoginRequest,
     SessionInfo,
 )
+from helper_app.nutanix.client import NutanixAuthError, NutanixError
 from helper_app.olvm.client import OlvmAuthError, OlvmError
 from helper_app.sessions import UserSession
 from helper_app.ui_password import MIN_PASSWORD_LENGTH, mark_prompt_done, setup_pending
@@ -185,6 +187,24 @@ async def olvm_login(body: OlvmLoginRequest, request: Request, response: Respons
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
     st.sessions.logout(session_token(request))
     session = st.sessions.create(None, olvm=olvm)
+    _set_cookie(st, response, session.token)
+    return session.info()
+
+
+@router.post("/nutanix/login", response_model=SessionInfo)
+async def nutanix_login(body: NutanixLoginRequest, request: Request, response: Response):
+    """Log in to Prism Central or Prism Element. The password stays in memory with the session."""
+    require_unlocked_if_protected(request)
+    st = request.app.state
+    try:
+        nutanix = await asyncio.to_thread(st.nutanix.login, body.prism_url, body.username, body.password,
+                                          body.verify_ssl)
+    except NutanixAuthError as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(exc))
+    except NutanixError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
+    st.sessions.logout(session_token(request))
+    session = st.sessions.create(None, nutanix=nutanix)
     _set_cookie(st, response, session.token)
     return session.info()
 

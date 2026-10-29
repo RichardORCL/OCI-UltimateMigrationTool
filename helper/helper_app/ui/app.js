@@ -237,6 +237,7 @@
   const isAws = (job) => job.kind === "aws";
   const isOlvm = (job) => job.kind === "olvm";
   const isHyperv = (job) => job.kind === "hyperv";
+  const isNutanix = (job) => job.kind === "nutanix";
   const sourceTypeLabel = (job) => {
     if (isOvaExport(job)) return "OCI export";
     if (isOva(job)) return "OVA";
@@ -246,6 +247,7 @@
     if (isAws(job)) return "AWS";
     if (isOlvm(job)) return "OLVM";
     if (isHyperv(job)) return "Hyper-V";
+    if (isNutanix(job)) return "Nutanix";
     return "VMware";
   };
   const SVG_NS = "http://www.w3.org/2000/svg";
@@ -280,7 +282,8 @@
   const hasAws = (me) => !!(me && me.aws_account_id);
   const hasOlvm = (me) => !!(me && me.olvm_engine);
   const hasHyperv = (me) => !!(me && me.hyperv_host);
-  const hasVcenter = (me) => !!(me && !me.anonymous && !me.azure_tenant_id && !me.gcp_client_email && !me.aws_account_id && !me.olvm_engine && !me.hyperv_host);
+  const hasNutanix = (me) => !!(me && me.nutanix_prism);
+  const hasVcenter = (me) => !!(me && !me.anonymous && !me.azure_tenant_id && !me.gcp_client_email && !me.aws_account_id && !me.olvm_engine && !me.hyperv_host && !me.nutanix_prism);
   const gcpZone = (id) => { const m = /\/zones\/([^/]+)\/instances\//i.exec(id || ""); return m ? m[1] : ""; };
   // Azure resource IDs are lower-cased by the API; the resource group is the fourth path element
   const azureResourceGroup = (id) => { const m = /\/resourcegroups\/([^/]+)/i.exec(id || ""); return m ? m[1] : ""; };
@@ -301,6 +304,7 @@
     if (hasAws(me)) return "#/aws/vms";
     if (hasOlvm(me)) return "#/olvm/vms";
     if (hasHyperv(me)) return "#/hyperv/vms";
+    if (hasNutanix(me)) return "#/nutanix/vms";
     if (hasVcenter(me)) return "#/vms";
     return null;
   };
@@ -320,6 +324,7 @@
     const aws = hasAws(me);
     const olvm = hasOlvm(me);
     const hyperv = hasHyperv(me);
+    const nutanix = hasNutanix(me);
     const subs = azure ? (me.azure_subscriptions || []).map((s) => s.name || s.id) : [];
     const label = anonymous ? "not logged in"
       : gcp ? `GCP: ${me.gcp_export_bucket || me.gcp_project_id}`
@@ -327,10 +332,12 @@
           : aws ? `AWS: ${me.aws_account_id} (${me.aws_region})`
             : olvm ? `${me.username} @ ${me.olvm_engine}`
             : hyperv ? `${me.username} @ ${me.hyperv_host}`
+            : nutanix ? `${me.username} @ ${me.nutanix_prism}`
             : `${me.username} @ ${me.vcenter_host}${me.vcenter_port && me.vcenter_port !== 443 ? ":" + me.vcenter_port : ""}`;
     const detailTitle = gcp ? `service account ${me.gcp_client_email}\nexport bucket: ${me.gcp_export_bucket}`
       : azure ? `service principal ${me.azure_client_id} in tenant ${me.azure_tenant_id}${subs.length ? `\nsubscriptions: ${subs.join(", ")}` : ""}`
-        : aws ? `IAM ${me.aws_access_key_id}\naccount ${me.aws_account_id} / ${me.aws_region}` : "";
+        : aws ? `IAM ${me.aws_access_key_id}\naccount ${me.aws_account_id} / ${me.aws_region}`
+          : nutanix ? (me.nutanix_api === "pe" ? "Prism Element (v2 API)" : "Prism Central (v3 API)") : "";
     const inventoryHash = inventoryHashFor(me);
     let who = userBox.querySelector("[data-username]");
     if (!who) {
@@ -433,6 +440,7 @@
     if (hasAws(state.me)) document.getElementById("start-aws").href = "#/aws/vms";
     if (hasOlvm(state.me)) document.getElementById("start-olvm").href = "#/olvm/vms";
     if (hasHyperv(state.me)) document.getElementById("start-hyperv").href = "#/hyperv/vms";
+    if (hasNutanix(state.me)) document.getElementById("start-nutanix").href = "#/nutanix/vms";
     wireAzureAuthHelpButton("start-azure-info");
     wireGcpAuthHelpButton("start-gcp-info");
     wireAwsAuthHelpButton("start-aws-info");
@@ -564,6 +572,42 @@
         try { localStorage.setItem("vcoci.olvmLogin", JSON.stringify({ engine: engine_url, username, verify_ssl, recent: remembered })); } catch (_) { /* private mode */ }
         setUser(me);
         if (["#/olvm/login", "#/login", "#/start", "#/iso"].includes(location.hash)) location.hash = "#/olvm/vms";
+        else route();
+      } catch (e) { err.textContent = e.message; }
+      finally { btn.disabled = false; }
+    });
+  }
+
+  async function showNutanixLogin() {
+    stopPolling();
+    setUser(null);
+    app.innerHTML = "";
+    app.append(tpl("tpl-nutanix-login"));
+    app.querySelector(".login").prepend(el("p", {}, el("a", { href: "#/start", class: "muted" }, "\u2190 back to start")));
+    const form = document.getElementById("nutanix-login-form");
+    const err = document.getElementById("nutanix-login-error");
+    const btn = document.getElementById("nutanix-login-btn");
+    let last = {};
+    try { last = JSON.parse(localStorage.getItem("vcoci.nutanixLogin") || "{}") || {}; } catch (_) { /* ignore */ }
+    const recent = Array.isArray(last.recent) ? last.recent : [];
+    const datalist = document.getElementById("nutanix-recent");
+    for (const h of recent) datalist.append(el("option", { value: h }));
+    form.elements.prism.value = recent[0] || last.prism || "";
+    form.elements.username.value = last.username || "";
+    form.elements.verify_ssl.checked = !!last.verify_ssl;
+    (form.elements.prism.value ? form.elements.password : form.elements.prism).focus();
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      err.textContent = ""; btn.disabled = true;
+      const prism_url = form.elements.prism.value.trim();
+      const username = form.elements.username.value.trim();
+      const verify_ssl = form.elements.verify_ssl.checked;
+      try {
+        const me = await api("POST", "/auth/nutanix/login", { prism_url, username, password: form.elements.password.value, verify_ssl });
+        const remembered = [prism_url, ...recent.filter((h) => h !== prism_url)].slice(0, 8);
+        try { localStorage.setItem("vcoci.nutanixLogin", JSON.stringify({ prism: prism_url, username, verify_ssl, recent: remembered })); } catch (_) { /* private mode */ }
+        setUser(me);
+        if (["#/nutanix/login", "#/login", "#/start", "#/iso"].includes(location.hash)) location.hash = "#/nutanix/vms";
         else route();
       } catch (e) { err.textContent = e.message; }
       finally { btn.disabled = false; }
@@ -742,7 +786,7 @@
     transfer.innerHTML = "";
     if (job.phase === "EXPORTING" && tr.started_at) {
       transfer.hidden = false;
-      transfer.textContent = `${isOvaExport(job) ? "Export disks to Object Storage" : isOva(job) ? "Copy data disks from Object Storage" : isAzure(job) ? "Disk export from Azure" : isOlvm(job) ? "Disk download from OLVM" : "Export OVF template"}: ${tr.percent || 0}% - ${fmtBytes(tr.bytes_received)} received` +
+      transfer.textContent = `${isOvaExport(job) ? "Export disks to Object Storage" : isOva(job) ? "Copy data disks from Object Storage" : isAzure(job) ? "Disk export from Azure" : isOlvm(job) ? "Disk download from OLVM" : isNutanix(job) ? "Disk download from Nutanix" : "Export OVF template"}: ${tr.percent || 0}% - ${fmtBytes(tr.bytes_received)} received` +
         (tr.throughput_bps ? ` at ${fmtRate(tr.throughput_bps)} (last minute)` : "") +
         ` - running ${fmtDuration((Date.now() - new Date(tr.started_at)) / 1000)}`;
     } else if (!TERMINAL.includes(job.phase) && job.step_percent !== null && job.step_percent !== undefined) {
@@ -779,6 +823,8 @@
     const awsJob = isAws(job);
     const olvmJob = isOlvm(job);
     const hypervJob = isHyperv(job);
+    const nutanixJob = isNutanix(job);
+    const nx = job.nutanix || {};
     const az = job.azure || {};
     const gc = job.gcp || {};
     const aw = job.aws || {};
@@ -810,6 +856,9 @@
       ["Guest OS", `${job.vm.guest_full_name || job.vm.guest_id}${job.target.operating_system_version ? ` - release ${job.target.operating_system_version} (selected)` : ""}`],
     ] : olvmJob ? [
       ["Source VM", `${job.vm.name} on ${((job.olvm || {}).engine_host) || "OLVM"}${job.olvm && job.olvm.cluster ? ` (${job.olvm.cluster})` : ""} - ${job.vm.num_cpu} vCPU, ${fmtBytes(job.vm.memory_mb * 1024 * 1024)} RAM, ${job.vm.disks.length} disk(s)`],
+      ["Guest OS", `${job.vm.guest_full_name || job.vm.guest_id}${job.target.operating_system_version ? ` - release ${job.target.operating_system_version} (selected)` : ""}`],
+    ] : nutanixJob ? [
+      ["Source VM", el("span", { title: job.vm.moid }, `${job.vm.name} on ${nx.prism_host || "Nutanix"}${nx.cluster ? ` (${nx.cluster})` : ""} - ${job.vm.num_cpu} vCPU, ${fmtBytes(job.vm.memory_mb * 1024 * 1024)} RAM, ${job.vm.disks.length} disk(s)`)],
       ["Guest OS", `${job.vm.guest_full_name || job.vm.guest_id}${job.target.operating_system_version ? ` - release ${job.target.operating_system_version} (selected)` : ""}`],
     ] : hypervJob ? [
       ["Source VM", `${job.vm.name} on ${((job.hyperv || {}).host) || "Hyper-V"} - ${job.vm.num_cpu} vCPU, ${fmtBytes(job.vm.memory_mb * 1024 * 1024)} RAM, ${job.vm.disks.length} disk(s)`],
@@ -909,6 +958,18 @@
       ...(job.guest_fixup ? [["Initramfs fix-up", fixupEl(job.guest_fixup, "See diagnostics.")]] : []),
       ...(job.network_fixup ? [["Network fix-up", fixupEl(job.network_fixup, "See diagnostics.")]] : []),
       ["Disk download", `OLVM image transfer via ${job.target.olvm_direct_from_host ? "the KVM host" : "the OLVM manager"}${job.nfc_host ? ` (${job.nfc_host})` : ""} (allocated extents only)${job.target.volume_vpus_per_gb ? `, ${job.target.volume_vpus_per_gb} VPU/GB volumes` : ""}`],
+      ["Started by", `${job.created_by || "-"} at ${new Date(job.created_at).toLocaleString()}`],
+    ] : nutanixJob ? [
+      ["Step", job.step || "-"],
+      ...(job.power_off_source || job.power_off_result ? [["Source power-off", { already_off: "was already powered off when the export started",
+        guest_shutdown: "shut down in Prism before the export (it stays powered off)",
+        powered_off: "powered off hard in Prism before the export (the guest did not shut down in time)" }[job.power_off_result]
+        || "the VM was powered on when the job was created; it is shut down right before the export"]] : []),
+      ...(nx.image_uuids && nx.image_uuids.length ? [["Temporary images", el("span", {}, ...nx.image_uuids.map((id) => el("div", { class: "ocid", title: id }, id)),
+        el("span", { class: "muted" }, terminal ? "left in Prism (delete them there, or run the cleanup again while logged in to Nutanix)" : "deleted after each disk is copied"))]] : []),
+      ...(job.guest_fixup ? [["Initramfs fix-up", fixupEl(job.guest_fixup, "See diagnostics.")]] : []),
+      ...(job.network_fixup ? [["Network fix-up", fixupEl(job.network_fixup, "See diagnostics.")]] : []),
+      ["Disk download", `Temporary Prism image per disk via ${nx.api === "pe" ? "Prism Element" : "Prism Central"}${job.nfc_host ? ` (${job.nfc_host})` : ""} (zero blocks not written)${job.target.volume_vpus_per_gb ? `, ${job.target.volume_vpus_per_gb} VPU/GB volumes` : ""}`],
       ["Started by", `${job.created_by || "-"} at ${new Date(job.created_at).toLocaleString()}`],
     ] : hypervJob ? [
       ["Step", job.step || "-"],
@@ -1119,13 +1180,15 @@
   async function vmsView(opts) {
     const olvm = !!(opts && opts.olvm);
     const hyperv = !!(opts && opts.hyperv);
+    const nutanix = !!(opts && opts.nutanix);
+    const clustered = olvm || nutanix;
     app.innerHTML = "";
     app.append(tpl("tpl-vms"));
-    if (olvm || hyperv) {
+    if (clustered || hyperv) {
       const clusterHead = app.querySelector("table.vms thead th:nth-child(2)");
-      if (clusterHead) clusterHead.textContent = olvm ? "Cluster" : "Host";
+      if (clusterHead) clusterHead.textContent = clustered ? "Cluster" : "Host";
       const filterBox = document.getElementById("vm-filter");
-      if (filterBox) filterBox.placeholder = olvm ? "Filter by name, cluster or guest OS" : "Filter by name, host or guest OS";
+      if (filterBox) filterBox.placeholder = clustered ? "Filter by name, cluster or guest OS" : "Filter by name, host or guest OS";
     }
     const rows = document.getElementById("vm-rows");
     const filter = document.getElementById("vm-filter");
@@ -1178,6 +1241,7 @@
           : "The VM is encrypted (VM encryption or a virtual TPM): vSphere does not allow exporting it. Decrypt it in vCenter first")
           : off ? "" : on ? (olvm ? "The VM is powered on: it will be shut down in OLVM just before the disk export"
             : hyperv ? "The VM is powered on: it will be shut down in Hyper-V just before the disk export"
+            : nutanix ? "The VM is powered on: it will be shut down in Prism just before the disk export"
             : "The VM is powered on: it will be shut down just before the disk export")
             : "Resume and shut down, or power off the VM first";
         rows.append(el("tr", {},
@@ -1190,7 +1254,7 @@
           el("td", {}, job ? el("a", { href: `#/jobs/${job.id}`, class: "phase " + job.phase }, job.phase) : el("span", { class: "muted" }, "-")),
           el("td", {}, active
             ? el("a", { href: `#/jobs/${job.id}`, class: "button secondary small" }, "View job")
-            : el("a", { href: olvm ? `#/olvm/export/${encodeURIComponent(vm.moid)}` : hyperv ? `#/hyperv/export/${encodeURIComponent(vm.moid)}` : `#/export/${vm.moid}`, class: "button primary small" + (exportable ? "" : " disabled"), title: why }, "Migrate"))));
+            : el("a", { href: olvm ? `#/olvm/export/${encodeURIComponent(vm.moid)}` : hyperv ? `#/hyperv/export/${encodeURIComponent(vm.moid)}` : nutanix ? `#/nutanix/export/${encodeURIComponent(vm.moid)}` : `#/export/${vm.moid}`, class: "button primary small" + (exportable ? "" : " disabled"), title: why }, "Migrate"))));
       }
       if (!visible.length) rows.append(el("tr", {}, el("td", { colspan: 8, class: "muted" }, vms.length ? "No virtual machines match the filters." : "No virtual machines found in this inventory.")));
       count.textContent = filtered.length === vms.length ? `${vms.length} virtual machines` : `${filtered.length} of ${vms.length} virtual machines`;
@@ -1211,7 +1275,7 @@
       loading = true;
       showLoading();
       try {
-        const [list, jobs] = await Promise.all([api("GET", (olvm ? "/olvm/vms" : hyperv ? "/hyperv/vms" : "/vms") + (refresh ? "?refresh=true" : "")), api("GET", "/jobs")]);
+        const [list, jobs] = await Promise.all([api("GET", (olvm ? "/olvm/vms" : hyperv ? "/hyperv/vms" : nutanix ? "/nutanix/vms" : "/vms") + (refresh ? "?refresh=true" : "")), api("GET", "/jobs")]);
         vms = list;
         state.jobsByVm = {};
         for (const j of jobs) if (j.vm && !state.jobsByVm[j.vm.moid]) state.jobsByVm[j.vm.moid] = j; // jobs are newest first
@@ -1408,6 +1472,7 @@
     const aws = !!(src && src.aws);
     const olvm = !!(src && src.olvm);
     const hyperv = !!(src && src.hyperv);
+    const nutanix = !!(src && src.nutanix);
     app.innerHTML = "";
     app.append(tpl("tpl-export"));
     const form = document.getElementById("target-form");
@@ -1427,12 +1492,18 @@
         : azure ? `/azure/vm?id=${encodeURIComponent(moid)}&capture_mode=${captureMode()}`
           : olvm ? `/olvm/vm?id=${encodeURIComponent(moid)}`
           : hyperv ? `/hyperv/vm?id=${encodeURIComponent(moid)}`
+          : nutanix ? `/nutanix/vm?id=${encodeURIComponent(moid)}`
           : `/vms/${encodeURIComponent(moid)}`;
     if (gcp) document.querySelector("#vm-card .toolbar a").href = "#/gcp/vms";
     else if (aws) document.querySelector("#vm-card .toolbar a").href = "#/aws/vms";
     else if (azure) document.querySelector("#vm-card .toolbar a").href = "#/azure/vms";
     else if (olvm) document.querySelector("#vm-card .toolbar a").href = "#/olvm/vms";
     else if (hyperv) document.querySelector("#vm-card .toolbar a").href = "#/hyperv/vms";
+    else if (nutanix) document.querySelector("#vm-card .toolbar a").href = "#/nutanix/vms";
+    if (nutanix) {
+      document.getElementById("power-off-note").innerHTML =
+        "<strong>This VM is powered on.</strong> Starting the migration <strong>shuts it down</strong> in Prism right before the disk export (after the OCI instance and volumes are prepared): an ACPI shutdown, then a hard power off if it does not stop in time. The VM stays powered off. You will be asked to confirm.";
+    }
     if (olvm) {
       document.getElementById("power-off-note").innerHTML =
         "<strong>This VM is powered on.</strong> Starting the migration <strong>shuts it down</strong> in OLVM right before the disk export (after the OCI instance and volumes are prepared): a guest shutdown, then a hard stop if it does not power off in time. The VM stays powered off. You will be asked to confirm.";
@@ -1458,6 +1529,7 @@
           : aws ? ["AZ / instance", vm.host_name || vm.moid]
             : olvm ? ["Cluster", vm.host_name || "-"]
             : hyperv ? ["Hyper-V host", vm.host_name || "-"]
+            : nutanix ? ["Cluster", vm.host_name || "-"]
             : ["ESXi host", vm.host_name || "-"],
       ["CPU / memory", `${vm.num_cpu} vCPU / ${fmtBytes(vm.memory_mb * 1024 * 1024)}`],
       ["Firmware", vm.firmware.toUpperCase() + (vm.secure_boot ? " (secure boot)" : "") + (vm.has_vtpm ? " + vTPM" : "")],
@@ -1569,7 +1641,7 @@
     const osLabel = document.getElementById("os-version-label");
     const osSel = sel("operating_system_version");
     const osHint = document.getElementById("os-version-hint");
-    const from = gcp ? "Google Cloud" : aws ? "Amazon EC2" : azure ? "Azure" : olvm ? "OLVM" : hyperv ? "Hyper-V" : "vCenter";
+    const from = gcp ? "Google Cloud" : aws ? "Amazon EC2" : azure ? "Azure" : olvm ? "OLVM" : hyperv ? "Hyper-V" : nutanix ? "Nutanix" : "vCenter";
     const catalog = Array.isArray(osCatalog) ? osCatalog : [];
     for (const entry of catalog) osNameSel.append(el("option", { value: entry.operating_system }, entry.operating_system));
     const detectedName = osInfo.operating_system || "";
@@ -1650,12 +1722,12 @@
     document.getElementById("gcp-transfer-note").hidden = !gcp;
     document.getElementById("azure-transfer-note").hidden = !azure;
     document.getElementById("aws-transfer-note").hidden = !aws;
-    document.getElementById("nfc-options").hidden = azure || gcp || aws || olvm || hyperv;
+    document.getElementById("nfc-options").hidden = azure || gcp || aws || olvm || hyperv || nutanix;
     document.getElementById("olvm-transfer-options").hidden = !olvm;
     document.getElementById("esxi-host-hint").textContent = vm.host_name ? `(${vm.host_name})` : "";
     sel("nfc_direct_to_esxi").disabled = !vm.host_name;
     // the NFC options are vCenter-only; Azure downloads page ranges instead
-    document.getElementById("nfc-options").hidden = azure || gcp || aws || olvm || hyperv;
+    document.getElementById("nfc-options").hidden = azure || gcp || aws || olvm || hyperv || nutanix;
     document.getElementById("azure-transfer-note").hidden = !azure;
     renderSizing();
 
@@ -1687,9 +1759,9 @@
         compatibility_mode: fd.get("compatibility_mode") === "on",
         boot_volume_type_override: fd.get("boot_volume_type_override") || null,
         network_type_override: fd.get("network_type_override") || null,
-        nfc_direct_to_esxi: !azure && !gcp && !aws && !olvm && !hyperv && fd.get("nfc_direct_to_esxi") === "on",
+        nfc_direct_to_esxi: !azure && !gcp && !aws && !olvm && !hyperv && !nutanix && fd.get("nfc_direct_to_esxi") === "on",
         olvm_direct_from_host: olvm && fd.get("olvm_direct_from_host") === "on",
-        pipelined_decode: !azure && !gcp && !aws && !olvm && !hyperv && fd.get("pipelined_decode") === "on",
+        pipelined_decode: !azure && !gcp && !aws && !olvm && !hyperv && !nutanix && fd.get("pipelined_decode") === "on",
         rebuild_initramfs: !isWin && fd.get("rebuild_initramfs") === "on",
         fix_network: !isWin && fd.get("fix_network") === "on",
         azure_cleanup: azure && !isWin && fd.get("azure_cleanup") === "on",
@@ -1724,6 +1796,13 @@
             "if it does not stop in time the VM is turned off hard.\n\n" +
             "The VM stays powered off in Hyper-V afterwards.\n\n" +
             `Power off "${vm.name}" and migrate it?`)
+          : nutanix
+          ? confirm(`WARNING: "${vm.name}" is powered on in Nutanix AHV.\n\n` +
+            `Starting this migration will POWER OFF the VM "${vm.name}" right before the disk export ` +
+            "(after the OCI instance and volumes are prepared). Prism sends an ACPI shutdown; " +
+            "if the guest does not stop in time the VM is powered off hard.\n\n" +
+            "The VM stays powered off in Prism afterwards.\n\n" +
+            `Power off "${vm.name}" and migrate it?`)
           : azure
           ? confirm(`WARNING: "${vm.name}" is running in Azure.\n\n` +
             `Starting this migration will DEALLOCATE (stop) the VM "${vm.name}" right before the disk export ` +
@@ -1751,6 +1830,8 @@
           ? await api("POST", "/jobs/olvm", { vm_id: moid, target, power_off_source: inspection.needs_power_off })
           : hyperv
           ? await api("POST", "/jobs/hyperv", { vm_id: moid, target, power_off_source: inspection.needs_power_off })
+          : nutanix
+          ? await api("POST", "/jobs/nutanix", { vm_id: moid, target, power_off_source: inspection.needs_power_off })
           : await api("POST", "/jobs", { vm_moid: moid, target, power_off_source: inspection.needs_power_off });
         location.hash = `#/jobs/${job.id}`;  // follow the migration on its own page
       } catch (e) { formError.textContent = e.message; submit.disabled = false; }
@@ -2423,7 +2504,7 @@
       if (p === "ACTIVE" ? TERMINAL.includes(j.phase) : p && j.phase !== p) return false;
       const q = search.value.trim().toLowerCase();
       const target = j.instance_display_name || j.target.display_name || "";
-      const extra = j.iso ? j.iso.bucket : j.ova ? j.ova.bucket : j.ova_export ? `${j.ova_export.bucket} ${j.ova_export.prefix}` : j.azure ? `${j.azure.resource_group} ${j.azure.subscription_name}` : j.olvm ? `${j.olvm.engine_host} ${j.olvm.cluster}` : "";
+      const extra = j.iso ? j.iso.bucket : j.ova ? j.ova.bucket : j.ova_export ? `${j.ova_export.bucket} ${j.ova_export.prefix}` : j.azure ? `${j.azure.resource_group} ${j.azure.subscription_name}` : j.olvm ? `${j.olvm.engine_host} ${j.olvm.cluster}` : j.nutanix ? `${j.nutanix.prism_host} ${j.nutanix.cluster}` : "";
       return !q || `${sourceTypeLabel(j)} ${sourceName(j)} ${extra} ${target}`.toLowerCase().includes(q);
     };
 
@@ -2440,7 +2521,8 @@
         ? (j.ova_export.ovf_object || `${j.ova_export.bucket}/${j.ova_export.prefix || ""}`)
         : (j.instance_display_name || j.target.display_name || sourceName(j));
       const where = j.azure ? el("span", { class: "muted" }, ` (${j.azure.resource_group})`)
-        : j.olvm && j.olvm.cluster ? el("span", { class: "muted" }, ` (${j.olvm.cluster})`) : null;
+        : j.olvm && j.olvm.cluster ? el("span", { class: "muted" }, ` (${j.olvm.cluster})`)
+          : j.nutanix && j.nutanix.cluster ? el("span", { class: "muted" }, ` (${j.nutanix.cluster})`) : null;
       const type = sourceTypeLabel(j);
       return el("td", { class: "name", title: j.azure ? `${type}\n${sourceVm}\n${targetVm}\n${j.azure.subscription_name || j.azure.subscription_id}/${j.azure.resource_group}` : `${type}\n${sourceVm}\n${targetVm}` },
         el("div", { class: "job-source" },
@@ -3157,6 +3239,7 @@
         if (hash === "#/aws/login") return showAwsLogin();
         if (hash === "#/olvm/login") return showOlvmLogin();
         if (hash === "#/hyperv/login") return showHypervLogin();
+        if (hash === "#/nutanix/login") return showNutanixLogin();
         try { setUser(await api("POST", "/auth/anonymous")); }
         catch (e2) { showError(e2.message); return; }
       }
@@ -3174,6 +3257,7 @@
         : hash.startsWith("#/aws/export/") ? "#/aws/vms"
           : hash.startsWith("#/olvm/export/") ? "#/olvm/vms"
           : hash.startsWith("#/hyperv/export/") ? "#/hyperv/vms"
+          : hash.startsWith("#/nutanix/export/") ? "#/nutanix/vms"
           : hash.startsWith("#/export/") ? "#/vms" : hash;
     const homeLink = document.getElementById("home-link");
     if (homeLink) homeLink.classList.toggle("active", hash === "#/start");
@@ -3187,6 +3271,7 @@
     const aws = hasAws(state.me);
     const olvm = hasOlvm(state.me);
     const hyperv = hasHyperv(state.me);
+    const nutanix = hasNutanix(state.me);
     if (hash === "#/start") return startView();
     if (hash === "#/unlock" || hash === "#/first-use") { location.hash = "#/start"; return; }
     if (hash === "#/login") { if (!hasVcenter(state.me)) return showLogin(); location.hash = "#/vms"; return; }
@@ -3195,6 +3280,7 @@
     if (hash === "#/aws/login") { if (!aws) return showAwsLogin(); location.hash = "#/aws/vms"; return; }
     if (hash === "#/olvm/login") { if (!olvm) return showOlvmLogin(); location.hash = "#/olvm/vms"; return; }
     if (hash === "#/hyperv/login") { if (!hyperv) return showHypervLogin(); location.hash = "#/hyperv/vms"; return; }
+    if (hash === "#/nutanix/login") { if (!nutanix) return showNutanixLogin(); location.hash = "#/nutanix/vms"; return; }
     if (hash === "#/iso") return isoView();
     if (hash === "#/ova") return ovaView();
     if (hash === "#/ova-export") return ovaExportView();
@@ -3204,7 +3290,7 @@
     if ((m = /^#\/jobs\/([^/]+)\/console$/.exec(hash))) return consoleView({ kind: "job", id: decodeURIComponent(m[1]) });
     if ((m = /^#\/jobs\/(.+)$/.exec(hash))) return jobDetailView(decodeURIComponent(m[1]));
     if (hash === "#/jobs") return jobsView();
-    if (hash === "#/vms") { if (anonymous || azure || gcp || aws || olvm || hyperv) { location.hash = "#/login"; return; } return vmsView(); }
+    if (hash === "#/vms") { if (anonymous || azure || gcp || aws || olvm || hyperv || nutanix) { location.hash = "#/login"; return; } return vmsView(); }
     if (hash === "#/setup") return setupView();
     // the Azure inventory and export form need an Azure login, the vSphere ones a vCenter login; the login
     // pages replace whatever session the browser has (a vCenter login cannot list Azure VMs and vice versa)
@@ -3233,7 +3319,12 @@
       if ((m = /^#\/hyperv\/export\/(.+)$/.exec(hash))) return exportView(decodeURIComponent(m[1]), { hyperv: true });
       return vmsView({ hyperv: true });
     }
-    if (anonymous || azure || gcp || aws || olvm || hyperv) { location.hash = "#/login"; return; }
+    if (hash === "#/nutanix/vms" || hash.startsWith("#/nutanix/export/")) {
+      if (!nutanix) { location.hash = "#/nutanix/login"; return; }
+      if ((m = /^#\/nutanix\/export\/(.+)$/.exec(hash))) return exportView(decodeURIComponent(m[1]), { nutanix: true });
+      return vmsView({ nutanix: true });
+    }
+    if (anonymous || azure || gcp || aws || olvm || hyperv || nutanix) { location.hash = "#/login"; return; }
     if ((m = /^#\/export\/(.+)$/.exec(hash))) return exportView(decodeURIComponent(m[1]));
     return vmsView();
   }

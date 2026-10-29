@@ -11,13 +11,21 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
 
 from helper_app import diagnostics
-from helper_app.api import routes_aws_vms, routes_azure_vms, routes_gcp_vms, routes_hyperv_vms, routes_olvm_vms
+from helper_app.api import (
+    routes_aws_vms,
+    routes_azure_vms,
+    routes_gcp_vms,
+    routes_hyperv_vms,
+    routes_nutanix_vms,
+    routes_olvm_vms,
+)
 from helper_app.api.routes_vms import inspect
 from helper_app.auth import (
     require_aws_session,
     require_azure_session,
     require_gcp_session,
     require_hyperv_session,
+    require_nutanix_session,
     require_olvm_session,
     require_session,
     require_vcenter_session,
@@ -32,6 +40,7 @@ from helper_app.models import (
     CreateHypervJobRequest,
     CreateIsoJobRequest,
     CreateJobRequest,
+    CreateNutanixJobRequest,
     CreateOlvmJobRequest,
     CreateOvaExportJobRequest,
     CreateOvaJobRequest,
@@ -41,6 +50,7 @@ from helper_app.models import (
     InstanceStatus,
     Job,
     JobPhase,
+    NutanixSourceInfo,
     OciTarget,
     OlvmSourceInfo,
     OvaExportSpec,
@@ -203,6 +213,48 @@ async def create_olvm_job(body: CreateOlvmJobRequest, request: Request,
         kind="olvm",
         vm=inspection.vm,
         olvm=OlvmSourceInfo(engine_host=olvm.engine_host, cluster=details.cluster, disk_ids=details.disk_ids),
+        target=body.target,
+        power_off_source=inspection.needs_power_off,
+        phase=JobPhase.QUEUED,
+        message="Queued" + (" (the VM is shut down right before the disk export)" if inspection.needs_power_off
+                            else ""),
+        disks=[DiskState(index=d.index, label=d.label, capacity_bytes=d.capacity_bytes, is_boot=(d.index == 0))
+               for d in inspection.vm.disks],
+        created_by=session.username,
+        created_at=now,
+        updated_at=now,
+    )
+    st.store.put(job)
+    st.runner.submit(job.id, session)
+    return job
+
+
+@router.post("/nutanix", response_model=Job, status_code=status.HTTP_202_ACCEPTED)
+async def create_nutanix_job(body: CreateNutanixJobRequest, request: Request,
+                             session: UserSession = Depends(require_nutanix_session)):
+    """Migrate a Nutanix AHV VM: it is shut down, then each disk is cloned to a temporary image and
+    streamed onto an OCI volume."""
+    st = request.app.state
+    details = await asyncio.to_thread(routes_nutanix_vms.inspect_details, session, body.vm_id)
+    inspection = routes_nutanix_vms.inspect(session, body.vm_id, details)
+    if not inspection.can_export:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "; ".join(inspection.problems))
+    if inspection.needs_power_off and not body.power_off_source:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"{inspection.vm.name} is powered on; confirm that it may be shut down for the "
+                            "migration (power_off_source), or power it off in Prism first")
+    await _check_guest_os(st, inspection, body.target, "Nutanix")
+    active = st.store.active_for_vm(inspection.vm.moid)
+    if active is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"job {active.id} for this VM is still {active.phase.value}")
+    now = utcnow()
+    nutanix = session.nutanix
+    job = Job(
+        id=uuid.uuid4().hex,
+        kind="nutanix",
+        vm=inspection.vm,
+        nutanix=NutanixSourceInfo(prism_host=nutanix.prism_host, api=nutanix.flavor, cluster=details.cluster,
+                                  disk_ids=details.disk_ids, container_uuids=details.container_uuids),
         target=body.target,
         power_off_source=inspection.needs_power_off,
         phase=JobPhase.QUEUED,

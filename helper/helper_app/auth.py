@@ -82,6 +82,14 @@ async def require_olvm_session(request: Request) -> UserSession:
     return session
 
 
+async def require_nutanix_session(request: Request) -> UserSession:
+    """A session with a Nutanix Prism login behind it (AHV inventory and migrations)."""
+    session = await require_session(request)
+    if session.nutanix is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "this function needs a Nutanix login")
+    return session
+
+
 async def require_aws_session(request: Request) -> UserSession:
     """A session with an AWS IAM login behind it (EC2 inventory and migrations)."""
     session = await require_session(request)

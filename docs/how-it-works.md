@@ -21,8 +21,8 @@ Contents
 
 Everything runs on a single VM in OCI, the **OCI Migration Tool VM**. Migrations run **without VDDK and
 without temporary storage on that VM**: source disks are streamed straight onto OCI block volumes that
-are attached to the tool VM while the copy runs. Every source (VMware, Hyper-V, OLVM, Azure, AWS, Google Cloud, OVA)
-ends in the same pipeline; only the way the source disks are read differs. Hyper-V and OLVM are read the same way as
+are attached to the tool VM while the copy runs. Every source (VMware, Hyper-V, OLVM, Nutanix AHV, Azure, AWS, Google Cloud, OVA)
+ends in the same pipeline; only the way the source disks are read differs. Hyper-V, OLVM and Nutanix AHV are read the same way as
 VMware: the VM is shut down, then its disks are streamed straight onto the OCI volumes.
 
 1. **Seed image.** The tool registers a tiny *seed* custom image matching the VM's firmware (BIOS/UEFI),
@@ -191,6 +191,63 @@ and SMB (TCP 445). System Center Virtual Machine Manager is not a source; connec
 the VM. Saved or paused VMs, pass-through disks, shared VHDX, shielded VMs, disks above 32 TB, a
 differencing disk whose parent file is missing, and VMs with no disks are refused before anything is
 created in OCI. The VM stays powered off afterwards. There is no snapshot-while-running mode.
+
+## Nutanix AHV
+
+You log in with a Prism URL (for example `https://prism.example.com:9440`), user name and password
+(`POST /api/auth/nutanix/login`). The same form accepts Prism Central and Prism Element: the tool calls
+`POST /api/nutanix/v3/clusters/list` and treats the endpoint as Prism Central when a cluster entity
+reports the `PRISM_CENTRAL` service. Otherwise it is Prism Element when `GET /PrismGateway/services/rest/v2.0/cluster`
+answers. Prism Central is read with the v3 API, across all registered clusters. Prism Element is
+read with the v2 API, and only that cluster is listed. Authentication is HTTP Basic on every request.
+The password stays in memory for the browser session. Controller VMs (CVMs) are not listed.
+
+Each VM is mapped to a `VmSpec` (`nutanix/inventory.py`): legacy BIOS or UEFI, plus Secure Boot when
+it is set. The mapping also takes sockets times cores per socket and memory. SCSI disks come first,
+then SATA, IDE and PCI, each ordered by device index. CD-ROMs are dropped. The guest OS comes from
+Nutanix Guest Tools (NGT) when it reports one; otherwise the VM stays generic and the operating system
+on the migration form overrides it.
+
+After the OCI side is prepared the tool:
+
+- shuts the source VM down if it is still on (confirmed by the operator when starting the job: ACPI
+  shutdown, then a hard power-off if it has not powered off after `HELPER_NUTANIX_SHUTDOWN_TIMEOUT_S`);
+- clones each vDisk into a temporary Prism image named `oci-umt-<job>-disk<N>`. On Prism Central this is
+  `POST /api/nutanix/v3/images` with a `vm_disk` data source; on Prism Element it is
+  `POST v2.0/images` with `vm_disk_clone` into the disk's storage container. It waits for the task,
+  up to `HELPER_NUTANIX_IMAGE_TIMEOUT_S`;
+- downloads the image as raw bytes over HTTPS (`GET /api/nutanix/v3/images/{uuid}/file`). When Prism
+  answers range requests, `HELPER_NUTANIX_RANGE_WORKERS` workers read `HELPER_NUTANIX_CHUNK_BYTES`
+  ranges in parallel; otherwise one sequential stream is read. All-zero chunks are not written;
+- deletes the image when the disk is copied. Image uuids are recorded on the job, so a failed or
+  cancelled job deletes the images it created. A leftover image with the same name from an earlier
+  attempt is deleted before the clone.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant H as Migration Tool VM (OCI)
+    participant P as Prism Central / Element
+    participant OCI as OCI APIs
+    B->>H: Log in with Prism URL, user and password
+    H->>P: Detect Prism Central (v3) or Prism Element (v2)
+    B->>H: List VMs, inspect, start migration
+    H->>OCI: Provision volumes on the tool VM
+    H->>P: ACPI shutdown, then power off if still on
+    loop each disk
+        H->>P: Clone vDisk to a temporary image
+        P-->>H: Raw image download (HTTPS, ranges when supported)
+        H->>H: Skip zero chunks, pwrite onto the volume
+        H->>P: Delete the temporary image
+    end
+    H->>H: Linux guest fix-ups
+    H->>OCI: Attach to target and start
+```
+
+The tool VM must reach Prism on TCP 9440. The storage container needs free space for one temporary
+image per disk while it is copied. Volume-group disks, CVMs, VMs with no disks (or only CD-ROMs) and
+VMs in a transient power state are refused before anything is created in OCI. The VM stays powered
+off afterwards. There is no snapshot-while-running mode.
 
 ## Microsoft Azure
 
@@ -500,6 +557,7 @@ the *Maximum compatibility* preset (IDE + E1000) - see [limitations.md](limitati
 | Migration tool -> OLVM KVM hosts | TCP 54322 | Only with *Download the disks directly from the KVM host* (per migration). The engine chooses the host that serves the disk |
 | Migration tool -> Hyper-V host | TCP 5986 | Hyper-V source only: WinRM over HTTPS (inventory, power). HTTP on TCP 5985 when HTTPS is off at login |
 | Migration tool -> Hyper-V host (SMB) | TCP 445 | Hyper-V source only: read-only copy of the VHD/VHDX files, usually through the admin share. A disk that already lives on a UNC path is read from that server |
+| Migration tool -> Prism Central / Prism Element | TCP 9440 | Nutanix source only: Prism REST API (inventory, power, temporary images) and the raw image download |
 | Migration tool -> vCenter | TCP 443 | SOAP API and the NFC disk download (vCenter proxies ESXi by default) |
 | Migration tool -> ESXi hosts | TCP 443 | Only with *Download the disks directly from the ESXi host* (per migration) or `HELPER_NFC_HOST_OVERRIDE`; bypasses the vCenter proxy, usually several times faster |
 | Migration tool -> `login.microsoftonline.com`, `management.azure.com` | TCP 443 | Azure source only: Entra ID token, Azure Resource Manager (VM inventory, deallocate, snapshots, export SAS). Needs a NAT gateway or other internet route |

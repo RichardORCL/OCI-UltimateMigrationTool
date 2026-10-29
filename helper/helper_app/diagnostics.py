@@ -109,6 +109,18 @@ def _source_lines(job: Job, settings: Settings) -> list[str]:
             f"direct_from_host={job.target.olvm_direct_from_host} download_host={job.nfc_host or '-'}",
             _fixup_lines(job),
         ]
+    if job.vm is not None and job.nutanix is not None:
+        n = job.nutanix
+        return [
+            f"  source Nutanix VM: {job.vm.name} ({job.vm.moid}) guest={job.vm.guest_id} firmware={job.vm.firmware} "
+            f"cpu={job.vm.num_cpu} mem_mb={job.vm.memory_mb} disks={len(job.vm.disks)} "
+            f"power_off_source={job.power_off_source} power_off_result={job.power_off_result or '-'}",
+            f"  nutanix: prism={n.prism_host} api={n.api} cluster={n.cluster or '-'} "
+            f"disks={','.join(n.disk_ids) or '-'} images_left={','.join(n.image_uuids) or '-'} "
+            f"range_workers={settings.nutanix_range_workers} chunk_bytes={settings.nutanix_chunk_bytes} "
+            f"download_host={job.nfc_host or '-'}",
+            _fixup_lines(job),
+        ]
     if job.vm is not None and job.hyperv is not None:
         h = job.hyperv
         chains = ";".join(",".join(chain) for chain in h.disks)

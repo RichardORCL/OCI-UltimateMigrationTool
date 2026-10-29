@@ -7,10 +7,10 @@ The whole tool is one service, the **OCI Ultimate Migration Tool**, running on a
 
 - a web UI (`/ui`) and REST API (`/api`) served by FastAPI/uvicorn over TLS on port 8443;
 - a source client chosen at login: pyVmomi for vCenter/ESXi, WinRM and SMB for a Hyper-V host, or a small `httpx` REST client for OLVM
-  (oVirt API 4 and the image proxy), Azure (Entra ID + ARM), AWS (SigV4: STS, EC2, EBS Direct) or
+  (oVirt API 4 and the image proxy), Nutanix Prism (v3 on Prism Central, v2 on Prism Element), Azure (Entra ID + ARM), AWS (SigV4: STS, EC2, EBS Direct) or
   Google Cloud (service-account JWT: Compute Engine, Cloud Build, Cloud Storage);
 - the migration engine that provisions the OCI target, pulls the disks from the source (NFC, Hyper-V SMB,
-  OLVM image transfer, Azure page blob, EBS Direct, GCS export tarball, or an OVA/OVF/qcow2 in Object Storage) and writes them onto OCI
+  OLVM image transfer, Nutanix temporary image download, Azure page blob, EBS Direct, GCS export tarball, or an OVA/OVF/qcow2 in Object Storage) and writes them onto OCI
   volumes attached to the Migration Tool itself.
 
 There is no agent in the source environment and no shared secret: the source platform's own RBAC
@@ -39,8 +39,9 @@ Migration Tool may create.
 
 ## Job lifecycle
 
-`Job.kind` is `vmware`, `olvm`, `azure`, `aws`, `gcp`, `ova`, `ovaexport` or `iso`. Source-specific state
-lives on the job (`Job.olvm` holds the engine host, cluster and disk ids; `Job.azure`, `Job.aws`, `Job.gcp`,
+`Job.kind` is `vmware`, `olvm`, `hyperv`, `nutanix`, `azure`, `aws`, `gcp`, `ova`, `ovaexport` or `iso`. Source-specific state
+lives on the job (`Job.olvm` holds the engine host, cluster and disk ids; `Job.nutanix` holds the Prism
+host, API flavor, cluster, disk ids and the temporary image uuids; `Job.azure`, `Job.aws`, `Job.gcp`,
 `Job.ova`, `Job.iso` hold capture mode, snapshot IDs, export SAS, GCS objects, and so on).
 `Job.phase`: `QUEUED -> PROVISIONING -> EXPORTING -> FINALIZING -> COMPLETED | FAILED | CANCELLED`.
 `Job.step`/`Job.message` carry the fine-grained progress; `Job.step_percent` is set while a step is backed
@@ -132,6 +133,17 @@ lowering it never interrupts a running one), the rest stay **QUEUED** ("Waiting 
      (`disk/vhd_image.py`). Unallocated blocks of a dynamic disk are skipped; a differencing chain is
      read from the leaf and its parents. The ranges are written with the shared range-copy workers
      (`HELPER_HYPERV_RANGE_CHUNK_BYTES`, `HELPER_HYPERV_RANGE_WORKERS`). Nothing is written on the host.
+   - **Nutanix jobs** (`MigrationRunner._run_nutanix`) follow the same shape: a VM that is still on and
+     whose job carries `power_off_source` is shut down (ACPI, then a hard power-off if it is not off
+     within `HELPER_NUTANIX_SHUTDOWN_TIMEOUT_S`; `power_off_result` is `guest_shutdown`, `powered_off`
+     or `already_off`). `NutanixDiskExport` (`nutanix/export.py`) clones each vDisk into a temporary
+     image (v3 `vm_disk` data source on Prism Central, v2 `vm_disk_clone` on Prism Element), waits for
+     the Prism task up to `HELPER_NUTANIX_IMAGE_TIMEOUT_S`, and records the image uuid in
+     `Job.nutanix.image_uuids` before the download starts. `disk/nutanix_image_copy.py` reads the raw
+     image with parallel range requests when a `Range: bytes=0-0` probe answers 206
+     (`HELPER_NUTANIX_RANGE_WORKERS`, `HELPER_NUTANIX_CHUNK_BYTES`), otherwise as one sequential
+     stream; all-zero chunks are not written. The image is deleted after its disk is copied; any
+     image still recorded is deleted by the source cleanup on failure or cancel.
    - **Azure jobs** (`MigrationRunner._run_azure`) replace the NFC part of this phase:
      - *deallocate* mode: a VM that is still running (or stopped but allocated) and whose job carries the
        operator's `power_off_source` confirmation is deallocated now (`POST .../deallocate`, polled up to

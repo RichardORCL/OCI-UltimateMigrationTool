@@ -54,6 +54,12 @@
             tool shuts them down and copies their disks into OCI instances.</p>
           <span class="button primary">Log in to Hyper-V</span>
         </a>
+        <a class="card start-choice" href="#/nutanix/login" id="start-nutanix">
+          <h3>Nutanix AHV</h3>
+          <p>Migrate virtual machines from Nutanix AHV to OCI: log in to Prism Central or Prism Element, pick the VMs,
+            and the migration tool shuts them down and copies their disks into OCI instances.</p>
+          <span class="button primary">Log in to Prism</span>
+        </a>
         <div class="card start-choice">
           <h3>Microsoft Azure</h3>
           <p>Migrate virtual machines from Azure to OCI: log in with a service principal, pick the VMs, and the migration
@@ -587,6 +593,34 @@
         <div class="actions">
           <span id="olvm-login-error" class="error"></span>
           <button type="submit" class="primary" id="olvm-login-btn">Log in</button>
+        </div>
+      </form>
+    </section>
+  </template>
+
+  <!-- ------------------------------------------------------------------ Nutanix login -->
+  <template id="tpl-nutanix-login">
+    <section class="card login">
+      <h2>Log in to Nutanix Prism</h2>
+      <p class="muted">Use a Prism Central or Prism Element account. It needs permission to list virtual machines,
+        power them off, and create and delete images (each disk is cloned to a temporary image for the download).</p>
+      <form id="nutanix-login-form" class="form" autocomplete="on">
+        <label>Prism
+          <input name="prism" type="text" required list="nutanix-recent" placeholder="https://prism.example.com:9440" autocapitalize="off" spellcheck="false">
+          <datalist id="nutanix-recent"></datalist>
+          <small>Host name or URL of Prism Central (v3 API) or Prism Element (v2 API); the port defaults to 9440. The migration tool VM must reach it on that port.</small>
+        </label>
+        <label class="check"><input type="checkbox" name="verify_ssl"> Verify the server certificate</label>
+        <small class="form-hint">Leave off for the cluster's self-signed certificate. The same setting is used for the disk download.</small>
+        <label>User name
+          <input name="username" type="text" required placeholder="admin">
+        </label>
+        <label>Password
+          <input name="password" type="password" required>
+        </label>
+        <div class="actions">
+          <span id="nutanix-login-error" class="error"></span>
+          <button type="submit" class="primary" id="nutanix-login-btn">Log in</button>
         </div>
       </form>
     </section>

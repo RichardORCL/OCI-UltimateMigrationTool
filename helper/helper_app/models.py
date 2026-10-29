@@ -479,7 +479,7 @@ class GuestFixup(BaseModel):
     log: list[str] = Field(default_factory=list, description="Step-by-step notes for diagnostics")
 
 
-JobKind = Literal["vmware", "iso", "ova", "ovaexport", "azure", "gcp", "aws", "olvm", "hyperv"]
+JobKind = Literal["vmware", "iso", "ova", "ovaexport", "azure", "gcp", "aws", "olvm", "hyperv", "nutanix"]
 
 AzureCaptureMode = Literal["deallocate", "snapshot"]
 GcpCaptureMode = Literal["stop", "snapshot"]
@@ -535,6 +535,19 @@ class OlvmSourceInfo(BaseModel):
     disk_ids: list[str] = Field(default_factory=list, description="Image disk IDs, in DiskSpec order")
 
 
+class NutanixSourceInfo(BaseModel):
+    """Where a Nutanix AHV job's VM lives. Each disk is cloned to a temporary image and downloaded."""
+
+    prism_host: str
+    api: Literal["pc", "pe"] = Field(default="pc", description="pc: Prism Central v3 API; pe: Prism Element v2 API")
+    cluster: str = ""
+    disk_ids: list[str] = Field(default_factory=list, description="vDisk uuids, in DiskSpec order")
+    container_uuids: list[str] = Field(default_factory=list,
+                                       description="Storage container of each vDisk, in DiskSpec order")
+    image_uuids: list[str] = Field(default_factory=list,
+                                   description="Temporary images created by this job and not deleted yet")
+
+
 class HypervSourceInfo(BaseModel):
     """Where a Hyper-V job's VM lives. Disks are read over SMB after the VM is shut down."""
 
@@ -561,13 +574,14 @@ class AwsSourceInfo(BaseModel):
 
 class Job(BaseModel):
     id: str
-    kind: JobKind = "vmware"  # vmware from vSphere; iso/ova from Object Storage; azure/gcp/aws/olvm/hyperv other sources
+    # vmware from vSphere; iso/ova from Object Storage; azure/gcp/aws/olvm/hyperv/nutanix other sources
+    kind: JobKind = "vmware"
     phase: JobPhase = JobPhase.QUEUED
     step: str = ""
     step_percent: Optional[int] = None  # progress of the current step when OCI reports one (work requests)
     message: str = ""
     error: Optional[str] = None
-    vm: Optional[VmSpec] = None  # the source VM for VMware, Azure, GCP, AWS, OLVM or Hyper-V jobs
+    vm: Optional[VmSpec] = None  # the source VM for VMware, Azure, GCP, AWS, OLVM, Hyper-V or Nutanix jobs
     iso: Optional[IsoSpec] = None  # the installer ISO (iso jobs)
     iso_image_id: Optional[str] = None  # custom image imported from the ISO (iso jobs)
     ova: Optional[OvaSpec] = None  # the OVA object (ova jobs)
@@ -579,6 +593,7 @@ class Job(BaseModel):
     aws: Optional[AwsSourceInfo] = None  # account / region / capture mode (aws jobs)
     olvm: Optional[OlvmSourceInfo] = None  # engine / cluster / disk ids (olvm jobs)
     hyperv: Optional[HypervSourceInfo] = None  # host and VHD/VHDX path chains (hyperv jobs)
+    nutanix: Optional[NutanixSourceInfo] = None  # Prism / cluster / vDisk uuids / temporary images (nutanix jobs)
     vcenter_host: str = ""  # vCenter the VM was inspected on ("host" or "host:port"); tagged onto the instance
     target: OciTarget
     power_off_source: bool = False  # VM was powered on when the job was created; shut it down before the export
@@ -762,6 +777,18 @@ class CreateOlvmJobRequest(BaseModel):
     )
 
 
+class CreateNutanixJobRequest(BaseModel):
+    """Migrate a Nutanix AHV VM (needs a Prism login on the session)."""
+
+    vm_id: str = Field(description="AHV virtual machine uuid")
+    target: OciTarget
+    power_off_source: bool = Field(
+        default=False,
+        description="Required for a powered-on VM: the user confirmed that the migration tool shuts it down "
+                    "right before the disk export (ACPI shutdown, hard power off as fallback)",
+    )
+
+
 class CreateAwsJobRequest(BaseModel):
     """Migrate an EC2 instance (needs an AWS login on the session)."""
 
@@ -842,6 +869,16 @@ class OlvmLoginRequest(BaseModel):
     )
 
 
+class NutanixLoginRequest(BaseModel):
+    prism_url: str = Field(description="Prism Central or Prism Element, for example https://prism.example.com:9440")
+    username: str = Field(description="Prism user, for example admin")
+    password: str
+    verify_ssl: bool = Field(
+        default=False,
+        description="Verify the Prism TLS certificate (API and image download)",
+    )
+
+
 class AwsLoginRequest(BaseModel):
     access_key_id: str = Field(description="IAM user access key ID (AKIA...)")
     secret_access_key: str
@@ -867,6 +904,8 @@ class SessionInfo(BaseModel):
     aws_account_id: str = ""
     olvm_engine: str = ""  # set when the session is an OLVM engine login
     hyperv_host: str = ""  # set when the session is a Hyper-V host login
+    nutanix_prism: str = ""  # set when the session is a Nutanix Prism login
+    nutanix_api: str = ""  # pc (Prism Central) or pe (Prism Element)
     created_at: datetime
     expires_at: datetime
 
