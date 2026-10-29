@@ -453,7 +453,7 @@ class NutanixClient:
             "name": name,
             "annotation": "Temporary image created by the OCI migration tool",
             "image_type": "DISK_IMAGE",
-            "vm_disk_clone": clone,
+            "vm_disk_clone_spec": clone,
         })
         return "", str((data or {}).get("task_uuid") or "")
 

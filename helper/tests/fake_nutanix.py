@@ -276,7 +276,11 @@ class FakeNutanix:
                     vm.power = "OFF"
                 return _json({"task_uuid": self._task([vm.uuid])}, status=201)
         if method == "POST" and path == "/images":
-            clone = body["vm_disk_clone"]
+            clone = body.get("vm_disk_clone_spec") or {}
+            vmdisk = (clone.get("disk_address") or {}).get("vmdisk_uuid")
+            if bool(vmdisk) == bool(body.get("image_import_spec")):
+                return _json({"message": "Exactly one of VMDisk UUID or Image path needs to be provided."},
+                             status=422)
             if not clone.get("storage_container_uuid"):
                 return _json({"message": "storage_container_uuid is required"}, status=400)
             image_uuid = self._clone(body["name"], clone["disk_address"]["vmdisk_uuid"])
