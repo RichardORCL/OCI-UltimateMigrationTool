@@ -250,6 +250,17 @@
     if (isNutanix(job)) return "Nutanix";
     return "VMware";
   };
+  // where the copied bytes came from, for "Data transferred"
+  const transferSourceLabel = (job) => {
+    if (isOva(job)) return "Object Storage";
+    if (isAzure(job)) return "Azure";
+    if (isGcp(job)) return "Google Cloud";
+    if (isAws(job)) return "Amazon EC2";
+    if (isOlvm(job)) return "OLVM";
+    if (isHyperv(job)) return "the Hyper-V host";
+    if (isNutanix(job)) return "Nutanix Prism";
+    return "vCenter";
+  };
   const SVG_NS = "http://www.w3.org/2000/svg";
   const jobEndpointIcon = (role) => {
     // Material-style logout (arrow out of box) / login (arrow into box), same family as the top-bar log off icon
@@ -970,6 +981,7 @@
       ...(job.guest_fixup ? [["Initramfs fix-up", fixupEl(job.guest_fixup, "See diagnostics.")]] : []),
       ...(job.network_fixup ? [["Network fix-up", fixupEl(job.network_fixup, "See diagnostics.")]] : []),
       ["Disk download", `Temporary Prism image per disk via ${nx.api === "pe" ? "Prism Element" : "Prism Central"}${job.nfc_host ? ` (${job.nfc_host})` : ""} (zero blocks not written)${job.target.volume_vpus_per_gb ? `, ${job.target.volume_vpus_per_gb} VPU/GB volumes` : ""}`],
+      ...(nx.regions ? [["Region map", nx.regions]] : []),
       ["Started by", `${job.created_by || "-"} at ${new Date(job.created_at).toLocaleString()}`],
     ] : hypervJob ? [
       ["Step", job.step || "-"],
@@ -1000,7 +1012,7 @@
       if (tr.started_at && !iso) {
         rows.push(["Data transferred", ovaExport
           ? `${fmtBytes(sm.bytes_received)} read from volumes, ${fmtBytes(sm.bytes_written)} written to Object Storage`
-          : `${fmtBytes(sm.bytes_received)} received from ${gcpJob ? "Google Cloud" : awsJob ? "Amazon EC2" : azure ? "Azure" : "vCenter"}, ${fmtBytes(sm.bytes_written)} written to OCI volumes`]);
+          : `${fmtBytes(sm.bytes_received)} received from ${transferSourceLabel(job)}, ${fmtBytes(sm.bytes_written)} written to OCI volumes`]);
         rows.push(["Average bandwidth", sm.average_bps ? fmtRate(sm.average_bps) : "-"]);
       }
     }
