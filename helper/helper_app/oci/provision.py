@@ -199,6 +199,7 @@ class Provisioner:
                 ),
                 freeform_tags=source_tags(job),
                 metadata={},
+                instance_options=M.InstanceOptions(are_legacy_imds_endpoints_disabled=True),
             )
             if platform_config is not None:
                 details.platform_config = platform_config
@@ -395,6 +396,7 @@ class Provisioner:
                 ),
                 freeform_tags=instance_tags,
                 metadata={},
+                instance_options=M.InstanceOptions(are_legacy_imds_endpoints_disabled=True),
             )
             if platform_config is not None:
                 details.platform_config = platform_config

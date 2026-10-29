@@ -73,6 +73,11 @@ class FakeCompute:
     # instances -----------------------------------------------------------
     def launch_instance(self, details):
         check_tags(details, "launch_instance")
+        # like a tenancy whose security zone requires IMDSv2: legacy endpoints left on is a 404
+        options = getattr(details, "instance_options", None)
+        if not (options and options.are_legacy_imds_endpoints_disabled):
+            raise service_error(404, "NotAuthorizedOrNotFound",
+                                "Authorization failed or requested resource not found.", "launch_instance")
         boot_size = getattr(details.source_details, "boot_volume_size_in_gbs", None)
         if boot_size is not None:
             check_volume_size(boot_size, "launch_instance", "Boot volume")

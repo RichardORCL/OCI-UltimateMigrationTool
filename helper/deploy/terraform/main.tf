@@ -199,6 +199,10 @@ resource "oci_core_instance" "helper" {
     is_consistent_volume_naming_enabled = true
   }
 
+  instance_options {
+    are_legacy_imds_endpoints_disabled = true
+  }
+
   # The tag selects the instance into the dynamic group. When create_iam is false the namespace
   # "UltimateMigrationTool" with key "role" must already exist in the tenancy.
   defined_tags = { "${local.tag_namespace}.${local.tag_role_key}" = "helper" }

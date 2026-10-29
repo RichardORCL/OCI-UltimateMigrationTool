@@ -223,6 +223,7 @@ class IsoInstaller:
                 ),
                 freeform_tags=iso_source_tags(job),
                 metadata={},
+                instance_options=M.InstanceOptions(are_legacy_imds_endpoints_disabled=True),
             )
             if platform_config is not None:
                 details.platform_config = platform_config
