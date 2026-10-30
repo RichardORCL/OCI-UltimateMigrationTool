@@ -97,6 +97,30 @@ def test_parse_ovf_single_disk():
     assert boot_disk_index(parsed) == 0
 
 
+@pytest.mark.parametrize(
+    "capacity, units, expected",
+    [
+        ("32", "byte * 2^30", 32 * 1024**3),
+        ("32", "byte*2^30", 32 * 1024**3),
+        ("2048", "byte * 2^20", 2048 * 1024**2),
+        ("4", "byte * 1024", 4096),
+        ("8", "GigaBytes", 8 * 1024**3),
+        ("10", "sector", 5120),
+        ("1073741824", "byte", 1073741824),
+    ],
+)
+def test_parse_ovf_capacity_allocation_units(capacity, units, expected):
+    ovf = _minimal_ovf().replace(b'ovf:capacity="1073741824"', f'ovf:capacity="{capacity}"'.encode())
+    ovf = ovf.replace(b'ovf:capacityAllocationUnits="byte"', f'ovf:capacityAllocationUnits="{units}"'.encode())
+    assert parse_ovf(ovf).disks[0].capacity_bytes == expected
+
+
+def test_parse_ovf_unknown_capacity_units():
+    ovf = _minimal_ovf().replace(b'ovf:capacityAllocationUnits="byte"', b'ovf:capacityAllocationUnits="furlong"')
+    with pytest.raises(OvfParseError):
+        parse_ovf(ovf)
+
+
 def test_parse_ovf_missing_disk():
     with pytest.raises(OvfParseError):
         parse_ovf(b"<Envelope xmlns='http://schemas.dmtf.org/ovf/envelope/1'></Envelope>")

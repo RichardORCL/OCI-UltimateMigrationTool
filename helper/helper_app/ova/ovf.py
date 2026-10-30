@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
@@ -52,6 +53,35 @@ def _local(tag: str) -> str:
     return tag
 
 
+_NAMED_UNITS = {
+    "byte": 1, "bytes": 1, "b": 1,
+    "kilobyte": 1024, "kilobytes": 1024, "kb": 1024, "kib": 1024,
+    "megabyte": 1024**2, "megabytes": 1024**2, "mb": 1024**2, "mib": 1024**2,
+    "gigabyte": 1024**3, "gigabytes": 1024**3, "gb": 1024**3, "gib": 1024**3,
+    "terabyte": 1024**4, "terabytes": 1024**4, "tb": 1024**4, "tib": 1024**4,
+    "sector": 512, "sectors": 512,
+}
+
+_UNIT_FACTOR = re.compile(r"^(\d+)(?:\^(\d+))?$")
+
+
+def unit_multiplier(units: str | None) -> int | None:
+    """Bytes per unit for a DMTF programmatic unit such as ``byte * 2^30``; None if unrecognised."""
+    text = (units or "byte").strip().lower().replace(" ", "")
+    if not text:
+        return 1
+    parts = text.split("*")
+    base = _NAMED_UNITS.get(parts[0])
+    if base is None:
+        return None
+    for part in parts[1:]:
+        m = _UNIT_FACTOR.match(part)
+        if not m:
+            return None
+        base *= int(m.group(1)) ** int(m.group(2) or 1)
+    return base
+
+
 def _capacity_bytes(elem: ET.Element) -> int:
     cap = elem.get("capacity") or elem.get("{http://schemas.dmtf.org/ovf/envelope/1}capacity")
     if cap is None:
@@ -63,17 +93,11 @@ def _capacity_bytes(elem: ET.Element) -> int:
     units = (
         elem.get("capacityAllocationUnits")
         or elem.get("{http://schemas.dmtf.org/ovf/envelope/1}capacityAllocationUnits")
-        or "byte"
-    ).lower()
-    if "byte" in units:
-        return value
-    if "sector" in units or units.endswith("*^2"):
-        return value * 512
-    if "gib" in units or "gb" in units:
-        return value * 1024**3
-    if "mib" in units or "mb" in units:
-        return value * 1024**2
-    return value * 512
+    )
+    multiplier = unit_multiplier(units)
+    if multiplier is None:
+        raise OvfParseError(f"unsupported disk capacityAllocationUnits {units!r}")
+    return value * multiplier
 
 
 def prepare_ovf_bytes(xml_bytes: bytes) -> bytes:
@@ -167,14 +191,10 @@ def _attr(elem: ET.Element, name: str) -> str | None:
 
 
 def _memory_mb(quantity: int, units: str | None) -> int:
-    u = (units or "byte * 2^20").lower()
-    if "2^20" in u or "mib" in u or "mb" in u or "megabyte" in u:
+    multiplier = unit_multiplier(units or "byte * 2^20")
+    if multiplier is None:
         return max(1, quantity)
-    if "2^30" in u or "gib" in u or "gb" in u or "gigabyte" in u:
-        return max(1, quantity * 1024)
-    if "byte" in u and "2^" not in u:
-        return max(1, quantity // (1024 * 1024))
-    return max(1, quantity)
+    return max(1, quantity * multiplier // (1024 * 1024))
 
 
 def _firmware_value(raw: str) -> str | None:
