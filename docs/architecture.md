@@ -7,10 +7,10 @@ The whole tool is one service, the **OCI Ultimate Migration Tool**, running on a
 
 - a web UI (`/ui`) and REST API (`/api`) served by FastAPI/uvicorn over TLS on port 8443;
 - a source client chosen at login: pyVmomi for vCenter/ESXi, WinRM and SMB for a Hyper-V host, or a small `httpx` REST client for OLVM
-  (oVirt API 4 and the image proxy), Nutanix Prism (v3 on Prism Central, v2 on Prism Element), Azure (Entra ID + ARM), AWS (SigV4: STS, EC2, EBS Direct) or
+  (oVirt API 4 and the image proxy), Nutanix Prism (v3 on Prism Central, v2 on Prism Element), Proxmox VE (REST API plus asyncssh to the nodes), Azure (Entra ID + ARM), AWS (SigV4: STS, EC2, EBS Direct) or
   Google Cloud (service-account JWT: Compute Engine, Cloud Build, Cloud Storage);
 - the migration engine that provisions the OCI target, pulls the disks from the source (NFC, Hyper-V SMB,
-  OLVM image transfer, Nutanix temporary image download, Azure page blob, EBS Direct, GCS export tarball, or an OVA/OVF/qcow2 in Object Storage) and writes them onto OCI
+  OLVM image transfer, Nutanix temporary image download, Proxmox read-only qemu-nbd over SSH, Azure page blob, EBS Direct, GCS export tarball, or an OVA/OVF/qcow2 in Object Storage) and writes them onto OCI
   volumes attached to the Migration Tool itself.
 
 There is no agent in the source environment and no shared secret: the source platform's own RBAC
@@ -149,6 +149,19 @@ lowering it never interrupts a running one), the rest stay **QUEUED** ("Waiting 
      only the data regions when there is a map (holes under 1 MiB are read rather than skipped), otherwise
      as one sequential stream; all-zero chunks are not written. The image is deleted after its disk is copied; any
      image still recorded is deleted by the source cleanup on failure or cancel.
+   - **Proxmox jobs** (`MigrationRunner._run_proxmox`) look the VM up again (it may have moved to another
+     node), shut it down when it is running and the job carries `power_off_source` (`status/shutdown`,
+     then `status/stop` after `HELPER_PROXMOX_SHUTDOWN_TIMEOUT_S`; `power_off_result` is
+     `guest_shutdown`, `powered_off` or `already_off`), and open an SSH session to the node
+     (`proxmox/ssh.py`, asyncssh on a background event loop; host key pinned per session).
+     `ProxmoxDiskExport` (`proxmox/export.py`) resolves each volume with `pvesm path`, reads the size and
+     data extents with `qemu-img info` / `qemu-img map`, records the socket in `Job.proxmox.nbd_exports`
+     and starts a read-only `qemu-nbd` on `/run/oci-umt-<job>-disk<N>.sock`. `proxmox/nbd.py` is a minimal
+     NBD client (fixed newstyle, `NBD_OPT_GO`, simple replies) over the SSH streamlocal channel; a pool of
+     `HELPER_PROXMOX_RANGE_WORKERS` connections feeds the shared range copy
+     (`HELPER_PROXMOX_RANGE_CHUNK_BYTES`), so only the data extents are read and all-zero chunks are not
+     written. The export is stopped after its disk; any export still recorded is stopped by the source
+     cleanup on failure or cancel.
    - **Azure jobs** (`MigrationRunner._run_azure`) replace the NFC part of this phase:
      - *deallocate* mode: a VM that is still running (or stopped but allocated) and whose job carries the
        operator's `power_off_source` confirmation is deallocated now (`POST .../deallocate`, polled up to

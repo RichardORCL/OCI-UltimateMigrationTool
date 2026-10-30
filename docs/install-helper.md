@@ -122,7 +122,7 @@ Then open `https://<tool-vm-ip>:8443/` in a browser and accept the self-signed c
 visit asks whether to protect the web UI with a password (you can also set, change or remove it later
 on **Setup**). If a password is set, unlock with it before the start page.
 
-The start page lists every option (VMware, Hyper-V, OLVM, Azure, AWS, Google Cloud, OVA import, ISO, Remote Console,
+The start page lists every option (VMware, Hyper-V, OLVM, Nutanix AHV, Proxmox VE, Azure, AWS, Google Cloud, OVA import, ISO, Remote Console,
 export to OVF). Pick one and follow its login or form. Source credentials are entered there, not in
 the stack; one Migration Tool VM can serve several sources and several accounts. The *(i)* buttons
 next to the cloud cards show how to prepare the service principal, IAM user or service account.
@@ -137,6 +137,11 @@ curl -k -sI https://<olvm-engine>/ovirt-engine/api | head -1
 curl -k -sI https://<olvm-engine>:54323/ | head -1
 # Hyper-V (WinRM HTTPS, and SMB for the disk files)
 curl -k -sI https://<hyperv-host>:5986/wsman | head -1
+# Nutanix (Prism Central or Prism Element)
+curl -k -sI https://<prism>:9440/ | head -1
+# Proxmox VE (API, and SSH to each node that runs a VM to migrate)
+curl -k -s https://<pve-node>:8006/api2/json/version   # 401 without credentials means it is reachable
+ssh -o BatchMode=yes -p 22 root@<pve-node> true         # "Permission denied" also proves the port is open
 # Azure
 curl -sI https://login.microsoftonline.com | head -1
 curl -sI https://management.azure.com | head -1

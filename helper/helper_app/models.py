@@ -479,7 +479,8 @@ class GuestFixup(BaseModel):
     log: list[str] = Field(default_factory=list, description="Step-by-step notes for diagnostics")
 
 
-JobKind = Literal["vmware", "iso", "ova", "ovaexport", "azure", "gcp", "aws", "olvm", "hyperv", "nutanix"]
+JobKind = Literal["vmware", "iso", "ova", "ovaexport", "azure", "gcp", "aws", "olvm", "hyperv", "nutanix",
+                  "proxmox"]
 
 AzureCaptureMode = Literal["deallocate", "snapshot"]
 GcpCaptureMode = Literal["stop", "snapshot"]
@@ -554,6 +555,21 @@ class NutanixSourceInfo(BaseModel):
     regions: str = Field(default="", description="How the data regions were found, or why the full disks are read")
 
 
+class ProxmoxSourceInfo(BaseModel):
+    """Where a Proxmox VE job's VM lives. Disks are read over SSH through temporary qemu-nbd exports."""
+
+    api_host: str
+    node: str
+    vmid: int
+    volids: list[str] = Field(default_factory=list, description="Volume ids (storage:volume), in DiskSpec order")
+    formats: list[str] = Field(default_factory=list, description="Image format of each volume, in DiskSpec order")
+    ssh_host: str = Field(default="", description="Address the disks are read from over SSH")
+    host_key_fingerprint: str = Field(default="", description="SSH host key of that node, trusted on first use")
+    nbd_exports: list[str] = Field(default_factory=list,
+                                   description="qemu-nbd sockets started on the node by this job and not stopped yet")
+    extents: str = Field(default="", description="How much of each disk holds data, from qemu-img map")
+
+
 class HypervSourceInfo(BaseModel):
     """Where a Hyper-V job's VM lives. Disks are read over SMB after the VM is shut down."""
 
@@ -600,6 +616,7 @@ class Job(BaseModel):
     olvm: Optional[OlvmSourceInfo] = None  # engine / cluster / disk ids (olvm jobs)
     hyperv: Optional[HypervSourceInfo] = None  # host and VHD/VHDX path chains (hyperv jobs)
     nutanix: Optional[NutanixSourceInfo] = None  # Prism / cluster / vDisk uuids / temporary images (nutanix jobs)
+    proxmox: Optional[ProxmoxSourceInfo] = None  # node / vmid / volume ids / NBD exports (proxmox jobs)
     vcenter_host: str = ""  # vCenter the VM was inspected on ("host" or "host:port"); tagged onto the instance
     target: OciTarget
     power_off_source: bool = False  # VM was powered on when the job was created; shut it down before the export
@@ -795,6 +812,18 @@ class CreateNutanixJobRequest(BaseModel):
     )
 
 
+class CreateProxmoxJobRequest(BaseModel):
+    """Migrate a Proxmox VE VM (needs a Proxmox login on the session)."""
+
+    vm_id: str = Field(description="Proxmox VM id (vmid), for example 101")
+    target: OciTarget
+    power_off_source: bool = Field(
+        default=False,
+        description="Required for a running VM: the user confirmed that the migration tool shuts it down "
+                    "right before the disk copy (ACPI shutdown, hard stop as fallback)",
+    )
+
+
 class CreateAwsJobRequest(BaseModel):
     """Migrate an EC2 instance (needs an AWS login on the session)."""
 
@@ -885,6 +914,25 @@ class NutanixLoginRequest(BaseModel):
     )
 
 
+class ProxmoxLoginRequest(BaseModel):
+    api_url: str = Field(description="Proxmox VE node or cluster address, for example https://pve.example.com:8006")
+    auth_mode: Literal["token", "password"] = Field(
+        default="token", description="token: API token plus SSH credentials; password: user and password "
+                                     "(root@pam is also used for SSH)")
+    token_id: str = Field(default="", description="API token ID, for example root@pam!migration")
+    token_secret: str = ""
+    username: str = Field(default="", description="Proxmox user, for example root@pam")
+    password: str = ""
+    ssh_user: str = Field(default="", description="SSH user on the nodes (root, or a user with passwordless sudo)")
+    ssh_password: str = ""
+    ssh_private_key: str = Field(default="", description="OpenSSH or PEM private key text")
+    ssh_passphrase: str = ""
+    ssh_host: str = Field(default="", description="SSH to this address for every node (single node or NAT); "
+                                                  "empty uses each node's cluster address")
+    ssh_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    verify_ssl: bool = Field(default=False, description="Verify the Proxmox API TLS certificate")
+
+
 class AwsLoginRequest(BaseModel):
     access_key_id: str = Field(description="IAM user access key ID (AKIA...)")
     secret_access_key: str
@@ -912,6 +960,8 @@ class SessionInfo(BaseModel):
     hyperv_host: str = ""  # set when the session is a Hyper-V host login
     nutanix_prism: str = ""  # set when the session is a Nutanix Prism login
     nutanix_api: str = ""  # pc (Prism Central) or pe (Prism Element)
+    proxmox_host: str = ""  # set when the session is a Proxmox VE login
+    proxmox_version: str = ""
     created_at: datetime
     expires_at: datetime
 

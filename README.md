@@ -12,6 +12,7 @@ before migration; some guests need driver installation or manual configuration t
 - **Hyper-V** - a Hyper-V host (Hyper-V Manager)
 - **Oracle Linux Virtualization Manager** - OLVM (oVirt) engine
 - **Nutanix AHV** - Prism Central or Prism Element
+- **Proxmox VE** - a node or cluster (API on TCP 8006, disks read over SSH)
 - **Microsoft Azure**
 - **Amazon Web Services** - EC2 instances
 - **Google Cloud** - Compute Engine VMs
@@ -53,9 +54,9 @@ not isolate jobs by user. Configure a password on first use and restrict access 
 ## Networking
 
 The tool VM is meant to run in a private subnet without a public IP. Its subnet needs a route to OCI
-services (Service Gateway and/or NAT gateway), and, for VMware, Hyper-V, OLVM and Nutanix sources, to vCenter/ESXi,
+services (Service Gateway and/or NAT gateway), and, for VMware, Hyper-V, OLVM, Nutanix and Proxmox sources, to vCenter/ESXi,
 the Hyper-V host (WinRM and SMB), the
-OLVM engine or Prism (TCP 9440) over your VPN/FastConnect; cloud sources are reached over the internet. Administrators reach the web UI on
+OLVM engine, Prism (TCP 9440) or the Proxmox nodes (TCP 8006 and SSH on 22) over your VPN/FastConnect; cloud sources are reached over the internet. Administrators reach the web UI on
 port 8443. The full list of flows and ports is in
 [docs/how-it-works.md](docs/how-it-works.md#networking).
 

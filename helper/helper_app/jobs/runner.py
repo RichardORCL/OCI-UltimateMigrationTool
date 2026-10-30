@@ -69,6 +69,10 @@ from helper_app.olvm.client import OlvmAuthError, OlvmError
 from helper_app.olvm.export import OlvmDiskExport
 from helper_app.olvm.inventory import power_state as olvm_power_state
 from helper_app.olvm.power import shut_down as olvm_shut_down
+from helper_app.proxmox.client import ProxmoxError
+from helper_app.proxmox.export import ProxmoxDiskExport
+from helper_app.proxmox.inventory import power_state as proxmox_power_state
+from helper_app.proxmox.power import shut_down as proxmox_shut_down
 from helper_app.runtime_settings import MAX_CONCURRENT_JOBS
 from helper_app.sessions import UserSession
 from helper_app.vsphere.export import ExportError, NfcExport, match_disk_urls
@@ -279,6 +283,8 @@ class MigrationRunner:
                 self._run_hyperv(job)
             elif job.kind == "nutanix":
                 self._run_nutanix(job)
+            elif job.kind == "proxmox":
+                self._run_proxmox(job)
             else:
                 self._run(job)
         except JobCancelled:
@@ -1387,6 +1393,148 @@ class MigrationRunner:
                 writer.close()
                 for reader in readers:
                     reader.close()
+        raise ExportError(f"{label} failed after {disk.attempts} attempts: {last_error}")
+
+    # ------------------------------------------------------------------ Proxmox VE
+    def _run_proxmox(self, job: Job) -> None:
+        session = self._sessions[job.id]
+        if session.proxmox is None:
+            raise ExportError("the session that created the job has no Proxmox login")
+        pve = session.proxmox
+        client = pve.client
+        info = job.proxmox
+        if info is None:
+            raise ExportError("job has no Proxmox source information")
+
+        self._save(job, JobPhase.PROVISIONING, "Requesting target instance and volumes in OCI")
+        self.prov.prepare(job, check_cancel=lambda: self._check_cancel(job))
+        self._check_cancel(job)
+
+        self._save(job, JobPhase.EXPORTING, "Checking the source VM in Proxmox")
+        vm = client.find_vm(info.vmid)
+        if vm.node != info.node:
+            self._save(job, message=f"{job.vm.name} moved from node {info.node} to {vm.node}")
+            info.node = vm.node
+        state = proxmox_power_state(str(client.vm_status(vm.node, vm.vmid).get("status") or vm.status))
+        job.vm.power_state = state
+        if state != "poweredOff":
+            if not job.power_off_source:
+                raise ExportError(f"VM is {state}; it must be shut down during the export")
+            job.step = "power_off"
+            self._save(job, message=f"Shutting down {job.vm.name} on node {vm.node}")
+            result = proxmox_shut_down(client, vm.node, vm.vmid, self.s.proxmox_shutdown_timeout_s,
+                                       on_wait=lambda: self._check_cancel(job), sleep=time.sleep)
+            job.power_off_result = result
+            job.vm.power_state = "poweredOff"
+            self._save(job, message=f"{job.vm.name} powered off ({result.replace('_', ' ')})")
+        else:
+            job.power_off_result = "already_off"
+
+        job.step = "export_access"
+        job.nfc_host = pve.node_host(info.node)
+        self._save(job, message=f"Connecting to node {info.node} ({job.nfc_host}) over SSH")
+        export = ProxmoxDiskExport(pve, job.id, info, workers=self.s.proxmox_range_workers,
+                                   save=lambda: self.store.put(job), check_cancel=lambda: self._check_cancel(job))
+        self._save(job, message=f"SSH to {info.ssh_host}: host key {info.host_key_fingerprint}")
+        with export:
+            job.transfer.started_at = job.transfer.started_at or utcnow()
+            job.transfer.percent = 0
+            self.store.put(job)
+            try:
+                for disk in job.disks:
+                    if disk.status == DiskStatus.COPIED:
+                        continue
+                    self._check_cancel(job)
+                    self._copy_proxmox_disk(job, disk, export)
+                job.transfer.percent = 100
+            finally:
+                job.transfer.finished_at = utcnow()
+                job.transfer.throughput_bps = 0.0
+        job.step = "export_released"
+        self._save(job, message="Temporary NBD exports on the node stopped")
+
+        self._check_cancel(job)
+        self._guest_fixup(job)
+
+        self._save(job, JobPhase.FINALIZING, "Attaching volumes to the target instance")
+        self.prov.finalize(job)
+        self._save(job, message=f"Migration complete: instance {job.instance_id}")
+
+    def _copy_proxmox_disk(self, job: Job, disk: DiskState, export: ProxmoxDiskExport) -> None:
+        last_error: Optional[Exception] = None
+        label = disk.label or f"disk {disk.index}"
+        info = job.proxmox
+        if info is None or disk.index >= len(info.volids):
+            raise ExportError(f"{label} has no Proxmox volume id")
+        for attempt in range(1, self.s.disk_retry_attempts + 1):
+            self._check_cancel(job)
+            disk.attempts = attempt
+            disk.status = DiskStatus.COPYING
+            disk.bytes_received = disk.bytes_written = disk.grains_written = 0
+            disk.percent = 0
+            disk.error = None
+            job.step = "copying"
+            self._save(job, message=f"Mapping {label} ({info.volids[disk.index]}) on node {info.node} "
+                                    f"(attempt {attempt}/{self.s.disk_retry_attempts})")
+            try:
+                writer = BlockDeviceWriter(disk.device, expected_min_size=disk.capacity_bytes)
+            except (OSError, ValueError) as exc:
+                raise ExportError(f"cannot open {disk.device}: {exc}") from exc
+            meter = RateMeter()
+            written_before = sum(d.bytes_written for d in job.disks if d is not disk)
+            source = None
+            try:
+                writer.ensure_size(disk.capacity_bytes)
+                source = export.open(disk.index)
+                if source.size > disk.capacity_bytes:
+                    raise ExportError(f"{label} is {source.size:,} bytes, larger than the {disk.capacity_bytes:,}-byte "
+                                      "volume (the VM config size is out of date)")
+                disk.stream_bytes = source.data_bytes or None
+                summaries = [p for p in info.extents.split("; ") if p and not p.startswith(f"{label}:")]
+                summaries.append(f"{label}: {source.data_bytes:,} of {source.size:,} bytes hold data ({source.fmt})")
+                info.extents = "; ".join(summaries)
+                self._save(job, message=f"Copying {label} from {source.path} on {job.nfc_host} to {disk.device}: "
+                                        f"{source.data_bytes:,} of {source.size:,} bytes hold data in "
+                                        f"{len(source.extents)} extent(s), {self.s.proxmox_range_workers} NBD readers")
+                stats = copy_nutanix_ranges(
+                    source.fetch, source.size, writer, extents=source.extents,
+                    chunk_bytes=self.s.proxmox_range_chunk_bytes, workers=self.s.proxmox_range_workers,
+                    retries=self.s.disk_retry_attempts,
+                    check_cancel=lambda: self._check_cancel(job),
+                    on_progress=self._cloud_progress_callback(job, disk, meter, written_before),
+                )
+                export.finish(source)
+                source = None
+                self._record_cloud_progress(job, disk, stats.bytes_received, stats.bytes_written,
+                                            stats.chunks_written, meter.rate(), written_before)
+                disk.percent = 100
+                disk.throughput_bps = 0.0
+                disk.status = DiskStatus.COPIED
+                skipped = stats.bytes_received - stats.bytes_written
+                self._save(job, message=f"{label} copied ({stats.bytes_received:,} bytes read, "
+                                        f"{skipped:,} zero bytes not written"
+                                        + (f", {stats.retries} retried" if stats.retries else "") + ")")
+                return
+            except JobCancelled:
+                disk.status = DiskStatus.FAILED
+                disk.error = "cancelled"
+                raise
+            except (ExportError, NutanixCopyError, ProxmoxError, OSError) as exc:
+                last_error = exc
+                disk.status = DiskStatus.FAILED
+                disk.throughput_bps = 0.0
+                job.transfer.throughput_bps = 0.0
+                disk.error = str(exc)
+                self._save(job, message=f"{label} attempt {attempt} failed: {exc}")
+                if attempt < self.s.disk_retry_attempts:
+                    time.sleep(min(30, 5 * attempt))
+            finally:
+                if source is not None:
+                    try:
+                        export.finish(source)
+                    except ProxmoxError as exc:
+                        log.warning("job %s: stopping the NBD export of %s failed: %s", job.id, label, exc)
+                writer.close()
         raise ExportError(f"{label} failed after {disk.attempts} attempts: {last_error}")
 
     def _guest_fixup(self, job: Job) -> None:

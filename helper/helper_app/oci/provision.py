@@ -31,6 +31,7 @@ from helper_app.branding import (
     TAG_SOURCE_MOID,
     TAG_SOURCE_NUTANIX,
     TAG_SOURCE_OLVM,
+    TAG_SOURCE_PROXMOX,
     TAG_SOURCE_VCENTER,
     TAG_SOURCE_VM,
     TAG_SOURCE_VM_DETAILS,
@@ -1074,6 +1075,8 @@ def source_tags(job: Job) -> dict[str, str]:
         prefix = f"Hyper-V host {job.hyperv.host}, "
     elif job.nutanix is not None and job.nutanix.cluster:
         prefix = f"Nutanix cluster {job.nutanix.cluster}, "
+    elif job.proxmox is not None:
+        prefix = f"Proxmox node {job.proxmox.node}, "
     details = (prefix + f"{vm.num_cpu} vCPU, {vm.memory_mb / 1024:g} GB RAM, {len(vm.disks)} disk(s) "
                f"{_gb(total):g} GB [{disks}], {len(vm.nics)} NIC(s), {vm.guest_full_name or vm.guest_id}, {firmware}")
     tags = {
@@ -1098,6 +1101,8 @@ def source_tags(job: Job) -> dict[str, str]:
         tags[TAG_SOURCE_HYPERV] = job.hyperv.host[:TAG_VALUE_MAX]
     if job.nutanix is not None:
         tags[TAG_SOURCE_NUTANIX] = f"{job.nutanix.prism_host}/{job.nutanix.cluster}".strip("/")[:TAG_VALUE_MAX]
+    if job.proxmox is not None:
+        tags[TAG_SOURCE_PROXMOX] = f"{job.proxmox.api_host}/{job.proxmox.node}/{job.proxmox.vmid}"[:TAG_VALUE_MAX]
     return tags
 
 

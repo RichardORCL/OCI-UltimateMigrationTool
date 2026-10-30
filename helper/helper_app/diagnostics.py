@@ -124,6 +124,19 @@ def _source_lines(job: Job, settings: Settings) -> list[str]:
             f"protection_domains_left={','.join(n.protection_domains) or '-'}",
             _fixup_lines(job),
         ]
+    if job.vm is not None and job.proxmox is not None:
+        p = job.proxmox
+        volumes = ",".join(f"{v}[{p.formats[i] if i < len(p.formats) else '?'}]" for i, v in enumerate(p.volids))
+        return [
+            f"  source Proxmox VM: {job.vm.name} ({job.vm.moid}) guest={job.vm.guest_id} firmware={job.vm.firmware} "
+            f"cpu={job.vm.num_cpu} mem_mb={job.vm.memory_mb} disks={len(job.vm.disks)} "
+            f"power_off_source={job.power_off_source} power_off_result={job.power_off_result or '-'}",
+            f"  proxmox: api={p.api_host} node={p.node} vmid={p.vmid} volumes={volumes or '-'} "
+            f"ssh_host={p.ssh_host or '-'} host_key={p.host_key_fingerprint or '-'} "
+            f"range_workers={settings.proxmox_range_workers} chunk_bytes={settings.proxmox_range_chunk_bytes}",
+            f"  proxmox extents: {p.extents or '-'} nbd_exports_left={','.join(p.nbd_exports) or '-'}",
+            _fixup_lines(job),
+        ]
     if job.vm is not None and job.hyperv is not None:
         h = job.hyperv
         chains = ";".join(",".join(chain) for chain in h.disks)

@@ -38,6 +38,7 @@ TAG_SOURCE_AWS = tag_key("source-aws")
 TAG_SOURCE_OLVM = tag_key("source-olvm")
 TAG_SOURCE_HYPERV = tag_key("source-hyperv")
 TAG_SOURCE_NUTANIX = tag_key("source-nutanix")
+TAG_SOURCE_PROXMOX = tag_key("source-proxmox")
 TAG_SOURCE_ISO = tag_key("source-iso")
 TAG_SOURCE_DETAILS = tag_key("source-details")
 

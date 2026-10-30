@@ -7,6 +7,7 @@ from helper_app.azure.export import release_azure_resources as release_azure
 from helper_app.gcp.export import release_gcp_resources as release_gcp
 from helper_app.models import Job
 from helper_app.nutanix.export import release_nutanix_resources as release_nutanix
+from helper_app.proxmox.export import release_proxmox_resources as release_proxmox
 from helper_app.sessions import UserSession
 
 
@@ -17,6 +18,7 @@ def release_source(job: Job, session: UserSession | None, save: Callable[[Job], 
         "gcp": (job.gcp, release_gcp, "GCP", ("snapshot_names", "gcs_objects", "export_prefix")),
         "nutanix": (job.nutanix, release_nutanix, "Nutanix",
                     ("image_uuids", "recovery_point_ids", "protection_domains")),
+        "proxmox": (job.proxmox, release_proxmox, "Proxmox", ("nbd_exports",)),
     }
     entry = providers.get(job.kind)
     if entry is None:
@@ -38,7 +40,8 @@ def release_source(job: Job, session: UserSession | None, save: Callable[[Job], 
             + f" - log in to {label} and retry cleanup"
         )
     else:
-        actions = release(backend.client, info)
+        # Proxmox exports are stopped over SSH, which the session (not the API client) holds
+        actions = release(backend if job.kind == "proxmox" else backend.client, info)
         message = f"{label}: " + "; ".join(actions) if actions else ""
     if message:
         job.message = (job.message + "; " if job.message else "") + message

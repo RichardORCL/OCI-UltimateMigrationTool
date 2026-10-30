@@ -18,6 +18,7 @@ from helper_app.api import (
     routes_hyperv_vms,
     routes_nutanix_vms,
     routes_olvm_vms,
+    routes_proxmox_vms,
 )
 from helper_app.api.routes_vms import inspect
 from helper_app.auth import (
@@ -27,6 +28,7 @@ from helper_app.auth import (
     require_hyperv_session,
     require_nutanix_session,
     require_olvm_session,
+    require_proxmox_session,
     require_session,
     require_vcenter_session,
 )
@@ -44,6 +46,7 @@ from helper_app.models import (
     CreateOlvmJobRequest,
     CreateOvaExportJobRequest,
     CreateOvaJobRequest,
+    CreateProxmoxJobRequest,
     DiskState,
     GcpSourceInfo,
     HypervSourceInfo,
@@ -54,6 +57,7 @@ from helper_app.models import (
     OciTarget,
     OlvmSourceInfo,
     OvaExportSpec,
+    ProxmoxSourceInfo,
     VmInspection,
     WindowsLicenseType,
 )
@@ -259,6 +263,47 @@ async def create_nutanix_job(body: CreateNutanixJobRequest, request: Request,
         power_off_source=inspection.needs_power_off,
         phase=JobPhase.QUEUED,
         message="Queued" + (" (the VM is shut down right before the disk export)" if inspection.needs_power_off
+                            else ""),
+        disks=[DiskState(index=d.index, label=d.label, capacity_bytes=d.capacity_bytes, is_boot=(d.index == 0))
+               for d in inspection.vm.disks],
+        created_by=session.username,
+        created_at=now,
+        updated_at=now,
+    )
+    st.store.put(job)
+    st.runner.submit(job.id, session)
+    return job
+
+
+@router.post("/proxmox", response_model=Job, status_code=status.HTTP_202_ACCEPTED)
+async def create_proxmox_job(body: CreateProxmoxJobRequest, request: Request,
+                             session: UserSession = Depends(require_proxmox_session)):
+    """Migrate a Proxmox VE VM: it is shut down, then the data extents of each disk are read over SSH
+    (a temporary qemu-nbd export on the node) onto an OCI volume."""
+    st = request.app.state
+    details = await asyncio.to_thread(routes_proxmox_vms.inspect_details, session, body.vm_id)
+    inspection = routes_proxmox_vms.inspect(session, body.vm_id, details)
+    if not inspection.can_export:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "; ".join(inspection.problems))
+    if inspection.needs_power_off and not body.power_off_source:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"{inspection.vm.name} is running; confirm that it may be shut down for the "
+                            "migration (power_off_source), or shut it down in Proxmox first")
+    await _check_guest_os(st, inspection, body.target, "Proxmox")
+    active = st.store.active_for_vm(inspection.vm.moid)
+    if active is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"job {active.id} for this VM is still {active.phase.value}")
+    now = utcnow()
+    job = Job(
+        id=uuid.uuid4().hex,
+        kind="proxmox",
+        vm=inspection.vm,
+        proxmox=ProxmoxSourceInfo(api_host=session.proxmox.api_host, node=details.vm.node, vmid=details.vm.vmid,
+                                  volids=details.volids, formats=details.formats),
+        target=body.target,
+        power_off_source=inspection.needs_power_off,
+        phase=JobPhase.QUEUED,
+        message="Queued" + (" (the VM is shut down right before the disk copy)" if inspection.needs_power_off
                             else ""),
         disks=[DiskState(index=d.index, label=d.label, capacity_bytes=d.capacity_bytes, is_boot=(d.index == 0))
                for d in inspection.vm.disks],

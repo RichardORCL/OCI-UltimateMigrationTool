@@ -26,10 +26,12 @@ from helper_app.models import (
     LoginRequest,
     NutanixLoginRequest,
     OlvmLoginRequest,
+    ProxmoxLoginRequest,
     SessionInfo,
 )
 from helper_app.nutanix.client import NutanixAuthError, NutanixError
 from helper_app.olvm.client import OlvmAuthError, OlvmError
+from helper_app.proxmox.client import ProxmoxAuthError, ProxmoxError
 from helper_app.sessions import UserSession
 from helper_app.ui_password import MIN_PASSWORD_LENGTH, mark_prompt_done, setup_pending
 from helper_app.vsphere.session import VCenterAuthError, VCenterError
@@ -205,6 +207,28 @@ async def nutanix_login(body: NutanixLoginRequest, request: Request, response: R
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
     st.sessions.logout(session_token(request))
     session = st.sessions.create(None, nutanix=nutanix)
+    _set_cookie(st, response, session.token)
+    return session.info()
+
+
+@router.post("/proxmox/login", response_model=SessionInfo)
+async def proxmox_login(body: ProxmoxLoginRequest, request: Request, response: Response):
+    """Log in to Proxmox VE (API token or password) and check SSH to a node. Secrets stay in memory."""
+    require_unlocked_if_protected(request)
+    st = request.app.state
+    try:
+        proxmox = await asyncio.to_thread(
+            st.proxmox.login, body.api_url, auth_mode=body.auth_mode, token_id=body.token_id,
+            token_secret=body.token_secret, username=body.username, password=body.password,
+            ssh_user=body.ssh_user, ssh_password=body.ssh_password, ssh_private_key=body.ssh_private_key,
+            ssh_passphrase=body.ssh_passphrase, ssh_host=body.ssh_host, ssh_port=body.ssh_port,
+            verify_ssl=body.verify_ssl)
+    except ProxmoxAuthError as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(exc))
+    except ProxmoxError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
+    st.sessions.logout(session_token(request))
+    session = st.sessions.create(None, proxmox=proxmox)
     _set_cookie(st, response, session.token)
     return session.info()
 

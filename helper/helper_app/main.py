@@ -27,6 +27,7 @@ from helper_app.api import (
     routes_nutanix_vms,
     routes_oci,
     routes_olvm_vms,
+    routes_proxmox_vms,
     routes_setup,
     routes_vms,
 )
@@ -44,6 +45,7 @@ from helper_app.nutanix.session import NutanixConnector
 from helper_app.oci.clients import OciClients, build_clients
 from helper_app.oci.provision import Provisioner
 from helper_app.olvm.session import OlvmConnector
+from helper_app.proxmox.session import ProxmoxConnector
 from helper_app.sessions import SessionStore
 from helper_app.sysstat import StatsSampler
 from helper_app.ui_password import UiPasswordStore
@@ -64,6 +66,7 @@ def create_app(
     olvm: Optional[OlvmConnector] = None,
     hyperv: Optional[HypervConnector] = None,
     nutanix: Optional[NutanixConnector] = None,
+    proxmox: Optional[ProxmoxConnector] = None,
     export_factory=None,
     updater: Optional[Updater] = None,
     command_runner: Runner = _default_runner,
@@ -92,6 +95,7 @@ def create_app(
         app.state.olvm = olvm or OlvmConnector(settings)
         app.state.hyperv = hyperv or HypervConnector(settings)
         app.state.nutanix = nutanix or NutanixConnector(settings)
+        app.state.proxmox = proxmox or ProxmoxConnector(settings)
         app.state.sessions = SessionStore(settings.session_ttl_s)
         app.state.ui_password = UiPasswordStore(settings.ui_password_hash_path)
         app.state.command_runner = command_runner  # runs git/systemctl/journalctl (injectable for tests)
@@ -128,6 +132,7 @@ def create_app(
     app.include_router(routes_olvm_vms.router)
     app.include_router(routes_hyperv_vms.router)
     app.include_router(routes_nutanix_vms.router)
+    app.include_router(routes_proxmox_vms.router)
     app.include_router(routes_jobs.router)
     app.include_router(routes_console.router)
     app.include_router(routes_oci.router)

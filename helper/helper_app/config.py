@@ -92,6 +92,14 @@ class Settings(BaseSettings):
     # protection-domain snapshot (Prism Element) is asked for its changed regions, then deleted
     nutanix_sparse_copy: bool = True
 
+    # Proxmox VE source: the API (TCP 8006) for inventory and power, SSH (TCP 22) to the node to
+    # read the disks. qemu-img map lists the extents with data and a temporary read-only qemu-nbd
+    # export serves them over an SSH stream-local channel; zero chunks are not written.
+    proxmox_shutdown_timeout_s: int = 300
+    proxmox_ssh_port: int = 22
+    proxmox_range_workers: int = 4
+    proxmox_range_chunk_bytes: int = 8 * 1024 * 1024
+
     # Logging (both adjustable from the Setup page; changes persist in runtime_settings_path)
     log_level: str = "INFO"
     oci_log_requests: bool = False  # enable redacted OCI SDK diagnostic logging at DEBUG (no raw wire dumps)

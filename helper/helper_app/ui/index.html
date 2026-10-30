@@ -60,6 +60,12 @@
             and the migration tool shuts them down and copies their disks into OCI instances.</p>
           <span class="button primary">Log in to Prism</span>
         </a>
+        <a class="card start-choice" href="#/proxmox/login" id="start-proxmox">
+          <h3>Proxmox VE</h3>
+          <p>Migrate virtual machines from Proxmox VE to OCI: log in with an API token or a password, pick the VMs,
+            and the migration tool shuts them down and copies the data on their disks over SSH into OCI instances.</p>
+          <span class="button primary">Log in to Proxmox</span>
+        </a>
         <div class="card start-choice">
           <h3>Microsoft Azure</h3>
           <p>Migrate virtual machines from Azure to OCI: log in with a service principal, pick the VMs, and the migration
@@ -621,6 +627,70 @@
         <div class="actions">
           <span id="nutanix-login-error" class="error"></span>
           <button type="submit" class="primary" id="nutanix-login-btn">Log in</button>
+        </div>
+      </form>
+    </section>
+  </template>
+
+  <!-- ------------------------------------------------------------------ Proxmox login -->
+  <template id="tpl-proxmox-login">
+    <section class="card login">
+      <h2>Log in to Proxmox VE</h2>
+      <p class="muted">The Proxmox API lists the VMs and shuts them down; the disks are read over SSH on the node that
+        runs the VM (<code>pvesm path</code>, <code>qemu-img map</code> and a temporary read-only <code>qemu-nbd</code>
+        export). The API user needs VM.Audit and VM.PowerMgmt; the SSH user must be root or have passwordless sudo.</p>
+      <form id="proxmox-login-form" class="form" autocomplete="on">
+        <label>Proxmox VE
+          <input name="api_url" type="text" required list="proxmox-recent" placeholder="https://pve.example.com:8006" autocapitalize="off" spellcheck="false">
+          <datalist id="proxmox-recent"></datalist>
+          <small>Host name or URL of any cluster node; the port defaults to 8006. The migration tool VM must reach the API there and SSH (TCP 22) on every node that runs a VM to migrate.</small>
+        </label>
+        <label class="check"><input type="checkbox" name="verify_ssl"> Verify the server certificate</label>
+        <small class="form-hint">Leave off for the node's self-signed certificate.</small>
+        <fieldset>
+          <legend>API login</legend>
+          <label class="check"><input type="radio" name="auth_mode" value="token" checked> API token</label>
+          <label class="check"><input type="radio" name="auth_mode" value="password"> User and password</label>
+        </fieldset>
+        <label data-mode="token">API token ID
+          <input name="token_id" type="text" placeholder="root@pam!migration" autocapitalize="off" spellcheck="false">
+          <small>Datacenter &gt; Permissions &gt; API Tokens. A token with privilege separation needs its own permissions.</small>
+        </label>
+        <label data-mode="token">Token secret
+          <input name="token_secret" type="password" autocomplete="off">
+        </label>
+        <label data-mode="password" hidden>User name
+          <input name="username" type="text" placeholder="root@pam" autocapitalize="off" spellcheck="false">
+          <small>Accounts with two-factor authentication need an API token instead.</small>
+        </label>
+        <label data-mode="password" hidden>Password
+          <input name="password" type="password">
+        </label>
+        <fieldset>
+          <legend>SSH to the nodes</legend>
+          <small id="proxmox-ssh-optional" hidden>Optional for a <code>@pam</code> account: leave the SSH fields empty to log in to the nodes with the same Linux user and password.</small>
+          <label>SSH user
+            <input name="ssh_user" type="text" placeholder="root" autocapitalize="off" spellcheck="false">
+          </label>
+          <label class="check"><input type="radio" name="ssh_auth" value="password" checked> Password</label>
+          <label class="check"><input type="radio" name="ssh_auth" value="key"> Private key</label>
+          <label data-ssh-auth="password">SSH password
+            <input name="ssh_password" type="password" autocomplete="off">
+          </label>
+          <label data-ssh-auth="key" hidden>Private key
+            <textarea name="ssh_private_key" rows="6" spellcheck="false" class="log" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+          </label>
+          <label data-ssh-auth="key" hidden>Key passphrase
+            <input name="ssh_passphrase" type="password" autocomplete="off">
+          </label>
+          <label>SSH host (optional)
+            <input name="ssh_host" type="text" placeholder="each node's cluster address" autocapitalize="off" spellcheck="false">
+            <small>Use this address for every node, for a single node or when the cluster addresses are not reachable (NAT). The node's SSH host key is trusted on first use and shown in the job details.</small>
+          </label>
+        </fieldset>
+        <div class="actions">
+          <span id="proxmox-login-error" class="error"></span>
+          <button type="submit" class="primary" id="proxmox-login-btn">Log in</button>
         </div>
       </form>
     </section>

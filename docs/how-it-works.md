@@ -10,7 +10,8 @@ Contents
 
 - [The OCI side, shared by all migrations](#the-oci-side-shared-by-all-migrations)
 - Migration options: [VMware vCenter / ESXi](#vmware-vcenter--esxi),
-  [Oracle Linux Virtualization Manager](#oracle-linux-virtualization-manager), [Microsoft Azure](#microsoft-azure),
+  [Oracle Linux Virtualization Manager](#oracle-linux-virtualization-manager), [Hyper-V](#hyper-v),
+  [Nutanix AHV](#nutanix-ahv), [Proxmox VE](#proxmox-ve), [Microsoft Azure](#microsoft-azure),
   [Amazon EC2](#amazon-ec2), [Google Cloud Compute Engine](#google-cloud-compute-engine),
   [Import OVA/OVF from Object Storage](#import-ovaovf-from-object-storage)
 - Extra features: [Create OCI instance from ISO](#create-oci-instance-from-iso),
@@ -21,8 +22,8 @@ Contents
 
 Everything runs on a single VM in OCI, the **OCI Migration Tool VM**. Migrations run **without VDDK and
 without temporary storage on that VM**: source disks are streamed straight onto OCI block volumes that
-are attached to the tool VM while the copy runs. Every source (VMware, Hyper-V, OLVM, Nutanix AHV, Azure, AWS, Google Cloud, OVA)
-ends in the same pipeline; only the way the source disks are read differs. Hyper-V, OLVM and Nutanix AHV are read the same way as
+are attached to the tool VM while the copy runs. Every source (VMware, Hyper-V, OLVM, Nutanix AHV, Proxmox VE, Azure, AWS, Google Cloud, OVA)
+ends in the same pipeline; only the way the source disks are read differs. Hyper-V, OLVM, Nutanix AHV and Proxmox VE are read the same way as
 VMware: the VM is shut down, then its disks are streamed straight onto the OCI volumes.
 
 1. **Seed image.** The tool registers a tiny *seed* custom image matching the VM's firmware (BIOS/UEFI),
@@ -261,6 +262,81 @@ The tool VM must reach Prism on TCP 9440. The storage container needs free space
 image per disk while it is copied. Volume-group disks, CVMs, VMs with no disks (or only CD-ROMs) and
 VMs in a transient power state are refused before anything is created in OCI. The VM stays powered
 off afterwards. There is no snapshot-while-running mode.
+
+## Proxmox VE
+
+You log in with the API URL of any cluster node (for example `https://pve1.example.com:8006`;
+`POST /api/auth/proxmox/login`) in one of two ways:
+
+- **API token** (`user@realm!tokenid` and its secret), sent as `Authorization: PVEAPIToken=...`. The disks
+  are read over SSH, so the form also needs SSH credentials for the nodes: a user (default `root`) and a
+  password or a private key (OpenSSH or PEM, optionally with a passphrase).
+- **User and password**, which gets a ticket from `POST /access/ticket` (renewed after 90 minutes; writes
+  send the CSRF token). For a `@pam` account the same password is used for SSH unless other SSH
+  credentials are given; other realms (`@pve`, LDAP) need explicit SSH credentials. Accounts with
+  two-factor authentication have to use an API token.
+
+Secrets stay in memory for the browser session; the form only remembers the URL and user names.
+An SSH user other than `root` needs passwordless `sudo` for `pvesm`, `qemu-img`, `qemu-nbd`, `sh` and
+`chown`. Host keys are trusted on first use and pinned for the session: a node presenting a different key
+fails the job. At login the tool checks that `pvesm`, `qemu-img` and `qemu-nbd` exist on the node it
+connected to.
+
+The VM list comes from `/cluster/resources?type=vm` (containers are not listed); each VM config is read
+with `/nodes/{node}/qemu/{vmid}/config` and mapped to a `VmSpec` (`proxmox/inventory.py`): SeaBIOS or
+OVMF (UEFI), sockets times cores (or `vcpus`), memory, and the disks with the boot disk first, then
+SCSI, VirtIO, SATA and IDE by index. CD-ROMs, the EFI vars disk, the TPM state disk and `unused` disks
+are not copied. The guest OS comes from the QEMU guest agent (`agent/get-osinfo`, running VMs only) or
+else from the `ostype`; Windows releases are not distinguished by `ostype`, so the migration form asks
+for the version. Passed-through disks (`/dev/...`), locked VMs, unsupported image formats and VMs without
+disks are refused before anything is created in OCI.
+
+After the OCI side is prepared the tool:
+
+- shuts the VM down if it is running (confirmed by the operator when starting the job): an ACPI
+  shutdown through `status/shutdown`, then `status/stop` if it is still running after
+  `HELPER_PROXMOX_SHUTDOWN_TIMEOUT_S`. Without the guest agent or ACPI support expect the hard stop;
+- opens an SSH session to the node that runs the VM (its cluster address from `/cluster/status`) and,
+  per disk, resolves the volume with `pvesm path`, reads the virtual size with `qemu-img info` and the
+  data extents with `qemu-img map` (both with `-U`, so nothing is locked);
+- starts a temporary read-only export, `qemu-nbd --read-only --force-share --fork` on a unix socket
+  `/run/oci-umt-<job>-disk<N>.sock`. The socket never listens on the network: the tool opens it through
+  the SSH connection (streamlocal forwarding) and speaks NBD over it;
+- reads only the data extents with `HELPER_PROXMOX_RANGE_WORKERS` parallel NBD connections in
+  `HELPER_PROXMOX_RANGE_CHUNK_BYTES` requests. qcow2, vmdk, thin LVM and ZFS on most setups report
+  holes; storage that does not (plain LVM, iSCSI or Ceph RBD mapped as a block device) is read in full.
+  All-zero chunks are not written;
+- stops the export (the `qemu-nbd` pid is only killed if it is still a qemu-nbd process) and removes the
+  socket. Exports are recorded on the job, so a failed or cancelled job stops the ones it left behind.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant H as Migration Tool VM (OCI)
+    participant P as Proxmox API (8006)
+    participant N as Proxmox node (SSH)
+    participant OCI as OCI APIs
+    B->>H: Log in with API token or user/password, plus SSH credentials
+    H->>P: Version, cluster nodes
+    H->>N: SSH, check pvesm / qemu-img / qemu-nbd
+    B->>H: List VMs, inspect, start migration
+    H->>OCI: Provision volumes on the tool VM
+    H->>P: ACPI shutdown, then stop if still running
+    loop each disk
+        H->>N: pvesm path, qemu-img info, qemu-img map
+        H->>N: Start read-only qemu-nbd on a unix socket
+        N-->>H: NBD reads of the data extents over the SSH channel
+        H->>H: Skip zero chunks, pwrite onto the volume
+        H->>N: Stop qemu-nbd, remove the socket
+    end
+    H->>H: Linux guest fix-ups
+    H->>OCI: Attach to target and start
+```
+
+The tool VM must reach the API on TCP 8006 and every node that runs a VM to migrate on SSH (TCP 22, or
+`HELPER_PROXMOX_SSH_PORT`). `sshd` on the nodes must allow streamlocal forwarding
+(`AllowStreamLocalForwarding`, on by default). The VM stays stopped afterwards. There is no
+snapshot-while-running mode.
 
 ## Microsoft Azure
 
@@ -571,6 +647,8 @@ the *Maximum compatibility* preset (IDE + E1000) - see [limitations.md](limitati
 | Migration tool -> Hyper-V host | TCP 5986 | Hyper-V source only: WinRM over HTTPS (inventory, power). HTTP on TCP 5985 when HTTPS is off at login |
 | Migration tool -> Hyper-V host (SMB) | TCP 445 | Hyper-V source only: read-only copy of the VHD/VHDX files, usually through the admin share. A disk that already lives on a UNC path is read from that server |
 | Migration tool -> Prism Central / Prism Element | TCP 9440 | Nutanix source only: Prism REST API (inventory, power, temporary images, region maps) and the raw image download. With Prism Central, also the Prism Element address that `discover-cluster` returns |
+| Migration tool -> Proxmox VE API | TCP 8006 | Proxmox source only: REST API (inventory, config, guest agent, power) on the node in the login URL |
+| Migration tool -> Proxmox VE nodes | TCP 22 | Proxmox source only: SSH to the login node and to each node that runs a VM being migrated (`pvesm`, `qemu-img`, temporary `qemu-nbd`); the disk data flows over this connection. Port set with `HELPER_PROXMOX_SSH_PORT` or on the login form |
 | Migration tool -> vCenter | TCP 443 | SOAP API and the NFC disk download (vCenter proxies ESXi by default) |
 | Migration tool -> ESXi hosts | TCP 443 | Only with *Download the disks directly from the ESXi host* (per migration) or `HELPER_NFC_HOST_OVERRIDE`; bypasses the vCenter proxy, usually several times faster |
 | Migration tool -> `login.microsoftonline.com`, `management.azure.com` | TCP 443 | Azure source only: Entra ID token, Azure Resource Manager (VM inventory, deallocate, snapshots, export SAS). Needs a NAT gateway or other internet route |

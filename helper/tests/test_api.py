@@ -25,6 +25,7 @@ from .fake_hyperv import make_fleet as make_hyperv_fleet
 from .fake_nutanix import make_fleet as make_nutanix_fleet
 from .fake_oci import FakeOci, service_error
 from .fake_olvm import make_fleet as make_olvm_fleet
+from .fake_proxmox import make_fleet as make_proxmox_fleet
 from .fake_vsphere import FakeExport, FakeVCenterConnector, make_vm
 from .test_vmdk_stream import make_raw
 
@@ -63,7 +64,7 @@ def target(**kw):
 
 class Env:
     def __init__(self, tmp_path, fail_once=frozenset({1}), block_event=None, store=None, tunnel_factory=None,
-                 azure=None, gcp=None, aws=None, olvm=None, hyperv=None, nutanix=None):
+                 azure=None, gcp=None, aws=None, olvm=None, hyperv=None, nutanix=None, proxmox=None):
         self.settings = Settings(device_prefix=str(tmp_path / "dev" / "oraclevd"), db_path=str(tmp_path / "jobs.db"),
                                  seed_bucket="oci-umt-seed", launch_timeout_s=5, volume_timeout_s=5,
                                  image_import_timeout_s=5, cookie_secure=False, console_connect_timeout_s=5,
@@ -99,6 +100,7 @@ class Env:
         self.olvm = olvm if olvm is not None else make_olvm_fleet(self.raws)
         self.hyperv = hyperv if hyperv is not None else make_hyperv_fleet()
         self.nutanix = nutanix if nutanix is not None else make_nutanix_fleet(self.raws)
+        self.proxmox = proxmox if proxmox is not None else make_proxmox_fleet(self.raws)
         self.store = store or JobStore(self.settings.db_path)
         FakeExport.instances.clear()
         self.updater = Updater(self.settings, runner=self._run_command, http_get=self._http_get)
@@ -138,6 +140,7 @@ class Env:
             olvm=self.olvm.connector(self.settings),
             hyperv=self.hyperv.connector(self.settings),
             nutanix=self.nutanix.connector(self.settings),
+            proxmox=self.proxmox.connector(self.settings),
             export_factory=export_factory, updater=self.updater, command_runner=self._run_command,
             scan_devices=self.fake.scan_devices, guest_fixer=guest_fixer, **extra,
         )

@@ -21,6 +21,7 @@ from helper_app.hyperv.session import HypervSession
 from helper_app.models import SessionInfo
 from helper_app.nutanix.session import NutanixSession
 from helper_app.olvm.session import OlvmSession
+from helper_app.proxmox.session import ProxmoxSession
 from helper_app.vsphere.session import VCenterSession
 
 log = logging.getLogger(__name__)
@@ -36,7 +37,8 @@ class UserSession:
     def __init__(self, token: str, vc: Optional[VCenterSession], ttl_s: float,
                  azure: Optional[AzureSession] = None, gcp: Optional[GcpSession] = None,
                  aws: Optional[AwsSession] = None, olvm: Optional[OlvmSession] = None,
-                 hyperv: Optional[HypervSession] = None, nutanix: Optional[NutanixSession] = None):
+                 hyperv: Optional[HypervSession] = None, nutanix: Optional[NutanixSession] = None,
+                 proxmox: Optional[ProxmoxSession] = None):
         self.token = token
         self.vc = vc
         self.azure = azure
@@ -45,6 +47,7 @@ class UserSession:
         self.olvm = olvm
         self.hyperv = hyperv
         self.nutanix = nutanix
+        self.proxmox = proxmox
         if vc is not None:
             self.username = vc.username
         elif azure is not None:
@@ -59,6 +62,8 @@ class UserSession:
             self.username = hyperv.username
         elif nutanix is not None:
             self.username = nutanix.username
+        elif proxmox is not None:
+            self.username = proxmox.username
         else:
             self.username = ANONYMOUS_USER
         self.created_at = datetime.now(timezone.utc)
@@ -72,7 +77,7 @@ class UserSession:
     def cloud_backend(self, kind: str):
         """Return credentials for a supported cloud job, never an arbitrary session attribute."""
         return {"azure": self.azure, "gcp": self.gcp, "aws": self.aws, "olvm": self.olvm,
-                "hyperv": self.hyperv, "nutanix": self.nutanix}.get(kind)
+                "hyperv": self.hyperv, "nutanix": self.nutanix, "proxmox": self.proxmox}.get(kind)
 
     # ------------------------------------------------------------- lifetime
     def touch(self) -> None:
@@ -98,7 +103,8 @@ class UserSession:
     @property
     def anonymous(self) -> bool:
         return (self.vc is None and self.azure is None and self.gcp is None and self.aws is None
-                and self.olvm is None and self.hyperv is None and self.nutanix is None)
+                and self.olvm is None and self.hyperv is None and self.nutanix is None
+                and self.proxmox is None)
 
     def info(self) -> SessionInfo:
         if self.anonymous:
@@ -136,6 +142,10 @@ class UserSession:
         if self.nutanix is not None:
             return SessionInfo(username=self.username, nutanix_prism=self.nutanix.prism_host,
                                nutanix_api=self.nutanix.flavor, verify_ssl=self.nutanix.verify_ssl,
+                               created_at=self.created_at, expires_at=self.expires_at)
+        if self.proxmox is not None:
+            return SessionInfo(username=self.username, proxmox_host=self.proxmox.api_host,
+                               proxmox_version=self.proxmox.version, verify_ssl=self.proxmox.verify_ssl,
                                created_at=self.created_at, expires_at=self.expires_at)
         return SessionInfo(username=self.username, vcenter_host=self.vc.host,
                            vcenter_port=getattr(self.vc, "port", 443), vcenter_version=self.vc.version,
@@ -182,6 +192,8 @@ class UserSession:
             self.hyperv.close()
         if self.nutanix is not None:
             self.nutanix.close()
+        if self.proxmox is not None:
+            self.proxmox.close()
 
 
 class SessionStore:
@@ -199,12 +211,13 @@ class SessionStore:
         olvm: Optional[OlvmSession] = None,
         hyperv: Optional[HypervSession] = None,
         nutanix: Optional[NutanixSession] = None,
+        proxmox: Optional[ProxmoxSession] = None,
     ) -> UserSession:
         """New session for a vCenter login, a cloud, OLVM, Hyper-V or Nutanix login, or an anonymous one for the
         ISO flow."""
         token = secrets.token_urlsafe(32)
         session = UserSession(token, vc, self.ttl_s, azure=azure, gcp=gcp, aws=aws, olvm=olvm, hyperv=hyperv,
-                              nutanix=nutanix)
+                              nutanix=nutanix, proxmox=proxmox)
         with self._lock:
             self._sessions[token] = session
         log.info("session created for %s", session.username)

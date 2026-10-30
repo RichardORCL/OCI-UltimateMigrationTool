@@ -50,6 +50,10 @@ See [install-helper.md](install-helper.md#configuration-reference) for usage and
 | `HELPER_NUTANIX_RANGE_WORKERS` | `4` |
 | `HELPER_NUTANIX_CHUNK_BYTES` | `8388608` |
 | `HELPER_NUTANIX_SPARSE_COPY` | `true` |
+| `HELPER_PROXMOX_SHUTDOWN_TIMEOUT_S` | `300` |
+| `HELPER_PROXMOX_SSH_PORT` | `22` |
+| `HELPER_PROXMOX_RANGE_WORKERS` | `4` |
+| `HELPER_PROXMOX_RANGE_CHUNK_BYTES` | `8388608` |
 | `HELPER_LOG_LEVEL` | `"INFO"` |
 | `HELPER_OCI_LOG_REQUESTS` | `false` |
 | `HELPER_RUNTIME_SETTINGS_PATH` | `"/var/lib/vc-oci-helper/runtime-settings.json"` |

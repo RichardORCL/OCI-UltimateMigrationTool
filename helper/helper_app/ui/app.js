@@ -238,6 +238,7 @@
   const isOlvm = (job) => job.kind === "olvm";
   const isHyperv = (job) => job.kind === "hyperv";
   const isNutanix = (job) => job.kind === "nutanix";
+  const isProxmox = (job) => job.kind === "proxmox";
   const sourceTypeLabel = (job) => {
     if (isOvaExport(job)) return "OCI export";
     if (isOva(job)) return "OVA";
@@ -248,6 +249,7 @@
     if (isOlvm(job)) return "OLVM";
     if (isHyperv(job)) return "Hyper-V";
     if (isNutanix(job)) return "Nutanix";
+    if (isProxmox(job)) return "Proxmox";
     return "VMware";
   };
   // where the copied bytes came from, for "Data transferred"
@@ -259,6 +261,7 @@
     if (isOlvm(job)) return "OLVM";
     if (isHyperv(job)) return "the Hyper-V host";
     if (isNutanix(job)) return "Nutanix Prism";
+    if (isProxmox(job)) return "the Proxmox node";
     return "vCenter";
   };
   const SVG_NS = "http://www.w3.org/2000/svg";
@@ -294,7 +297,8 @@
   const hasOlvm = (me) => !!(me && me.olvm_engine);
   const hasHyperv = (me) => !!(me && me.hyperv_host);
   const hasNutanix = (me) => !!(me && me.nutanix_prism);
-  const hasVcenter = (me) => !!(me && !me.anonymous && !me.azure_tenant_id && !me.gcp_client_email && !me.aws_account_id && !me.olvm_engine && !me.hyperv_host && !me.nutanix_prism);
+  const hasProxmox = (me) => !!(me && me.proxmox_host);
+  const hasVcenter = (me) => !!(me && !me.anonymous && !me.azure_tenant_id && !me.gcp_client_email && !me.aws_account_id && !me.olvm_engine && !me.hyperv_host && !me.nutanix_prism && !me.proxmox_host);
   const gcpZone = (id) => { const m = /\/zones\/([^/]+)\/instances\//i.exec(id || ""); return m ? m[1] : ""; };
   // Azure resource IDs are lower-cased by the API; the resource group is the fourth path element
   const azureResourceGroup = (id) => { const m = /\/resourcegroups\/([^/]+)/i.exec(id || ""); return m ? m[1] : ""; };
@@ -316,6 +320,7 @@
     if (hasOlvm(me)) return "#/olvm/vms";
     if (hasHyperv(me)) return "#/hyperv/vms";
     if (hasNutanix(me)) return "#/nutanix/vms";
+    if (hasProxmox(me)) return "#/proxmox/vms";
     if (hasVcenter(me)) return "#/vms";
     return null;
   };
@@ -336,6 +341,7 @@
     const olvm = hasOlvm(me);
     const hyperv = hasHyperv(me);
     const nutanix = hasNutanix(me);
+    const proxmox = hasProxmox(me);
     const subs = azure ? (me.azure_subscriptions || []).map((s) => s.name || s.id) : [];
     const label = anonymous ? "not logged in"
       : gcp ? `GCP: ${me.gcp_export_bucket || me.gcp_project_id}`
@@ -344,11 +350,13 @@
             : olvm ? `${me.username} @ ${me.olvm_engine}`
             : hyperv ? `${me.username} @ ${me.hyperv_host}`
             : nutanix ? `${me.username} @ ${me.nutanix_prism}`
+            : proxmox ? `${me.username} @ ${me.proxmox_host}`
             : `${me.username} @ ${me.vcenter_host}${me.vcenter_port && me.vcenter_port !== 443 ? ":" + me.vcenter_port : ""}`;
     const detailTitle = gcp ? `service account ${me.gcp_client_email}\nexport bucket: ${me.gcp_export_bucket}`
       : azure ? `service principal ${me.azure_client_id} in tenant ${me.azure_tenant_id}${subs.length ? `\nsubscriptions: ${subs.join(", ")}` : ""}`
         : aws ? `IAM ${me.aws_access_key_id}\naccount ${me.aws_account_id} / ${me.aws_region}`
-          : nutanix ? (me.nutanix_api === "pe" ? "Prism Element (v2 API)" : "Prism Central (v3 API)") : "";
+          : nutanix ? (me.nutanix_api === "pe" ? "Prism Element (v2 API)" : "Prism Central (v3 API)")
+            : proxmox ? `Proxmox VE ${me.proxmox_version || ""}`.trim() : "";
     const inventoryHash = inventoryHashFor(me);
     let who = userBox.querySelector("[data-username]");
     if (!who) {
@@ -452,6 +460,7 @@
     if (hasOlvm(state.me)) document.getElementById("start-olvm").href = "#/olvm/vms";
     if (hasHyperv(state.me)) document.getElementById("start-hyperv").href = "#/hyperv/vms";
     if (hasNutanix(state.me)) document.getElementById("start-nutanix").href = "#/nutanix/vms";
+    if (hasProxmox(state.me)) document.getElementById("start-proxmox").href = "#/proxmox/vms";
     wireAzureAuthHelpButton("start-azure-info");
     wireGcpAuthHelpButton("start-gcp-info");
     wireAwsAuthHelpButton("start-aws-info");
@@ -619,6 +628,82 @@
         try { localStorage.setItem("vcoci.nutanixLogin", JSON.stringify({ prism: prism_url, username, verify_ssl, recent: remembered })); } catch (_) { /* private mode */ }
         setUser(me);
         if (["#/nutanix/login", "#/login", "#/start", "#/iso"].includes(location.hash)) location.hash = "#/nutanix/vms";
+        else route();
+      } catch (e) { err.textContent = e.message; }
+      finally { btn.disabled = false; }
+    });
+  }
+
+  async function showProxmoxLogin() {
+    stopPolling();
+    setUser(null);
+    app.innerHTML = "";
+    app.append(tpl("tpl-proxmox-login"));
+    app.querySelector(".login").prepend(el("p", {}, el("a", { href: "#/start", class: "muted" }, "\u2190 back to start")));
+    const form = document.getElementById("proxmox-login-form");
+    const err = document.getElementById("proxmox-login-error");
+    const btn = document.getElementById("proxmox-login-btn");
+    // secrets are never stored; only the address, user names and choices
+    let last = {};
+    try { last = JSON.parse(localStorage.getItem("vcoci.proxmoxLogin") || "{}") || {}; } catch (_) { /* ignore */ }
+    const recent = Array.isArray(last.recent) ? last.recent : [];
+    const datalist = document.getElementById("proxmox-recent");
+    for (const h of recent) datalist.append(el("option", { value: h }));
+    const f = form.elements;
+    f.api_url.value = recent[0] || last.api_url || "";
+    f.token_id.value = last.token_id || "";
+    f.username.value = last.username || "";
+    f.ssh_user.value = last.ssh_user || "";
+    f.ssh_host.value = last.ssh_host || "";
+    f.verify_ssl.checked = !!last.verify_ssl;
+    const modeInputs = form.querySelectorAll("input[name=auth_mode]");
+    const keyInputs = form.querySelectorAll("input[name=ssh_auth]");
+    const pick = (inputs, value) => { for (const i of inputs) i.checked = i.value === value; };
+    pick(modeInputs, last.auth_mode === "password" ? "password" : "token");
+    pick(keyInputs, last.ssh_auth === "key" ? "key" : "password");
+    const paint = () => {
+      const mode = form.querySelector("input[name=auth_mode]:checked").value;
+      const sshAuth = form.querySelector("input[name=ssh_auth]:checked").value;
+      for (const node of form.querySelectorAll("[data-mode]")) node.hidden = node.dataset.mode !== mode;
+      for (const node of form.querySelectorAll("[data-ssh-auth]")) node.hidden = node.dataset.sshAuth !== sshAuth;
+      f.token_id.required = f.token_secret.required = mode === "token";
+      f.username.required = f.password.required = mode === "password";
+      document.getElementById("proxmox-ssh-optional").hidden = mode !== "password";
+    };
+    for (const i of [...modeInputs, ...keyInputs]) i.addEventListener("change", paint);
+    paint();
+    (f.api_url.value ? (last.auth_mode === "password" ? f.password : f.token_secret) : f.api_url).focus();
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      err.textContent = ""; btn.disabled = true;
+      const auth_mode = form.querySelector("input[name=auth_mode]:checked").value;
+      const ssh_auth = form.querySelector("input[name=ssh_auth]:checked").value;
+      const body = {
+        api_url: f.api_url.value.trim(),
+        auth_mode,
+        token_id: auth_mode === "token" ? f.token_id.value.trim() : "",
+        token_secret: auth_mode === "token" ? f.token_secret.value.trim() : "",
+        username: auth_mode === "password" ? f.username.value.trim() : "",
+        password: auth_mode === "password" ? f.password.value : "",
+        ssh_user: f.ssh_user.value.trim(),
+        ssh_password: ssh_auth === "password" ? f.ssh_password.value : "",
+        ssh_private_key: ssh_auth === "key" ? f.ssh_private_key.value : "",
+        ssh_passphrase: ssh_auth === "key" ? f.ssh_passphrase.value : "",
+        ssh_host: f.ssh_host.value.trim(),
+        verify_ssl: f.verify_ssl.checked,
+      };
+      try {
+        const me = await api("POST", "/auth/proxmox/login", body);
+        const remembered = [body.api_url, ...recent.filter((h) => h !== body.api_url)].slice(0, 8);
+        try {
+          localStorage.setItem("vcoci.proxmoxLogin", JSON.stringify({
+            api_url: body.api_url, auth_mode, token_id: body.token_id || last.token_id || "",
+            username: body.username || last.username || "", ssh_user: body.ssh_user, ssh_host: body.ssh_host,
+            ssh_auth, verify_ssl: body.verify_ssl, recent: remembered,
+          }));
+        } catch (_) { /* private mode */ }
+        setUser(me);
+        if (["#/proxmox/login", "#/login", "#/start", "#/iso"].includes(location.hash)) location.hash = "#/proxmox/vms";
         else route();
       } catch (e) { err.textContent = e.message; }
       finally { btn.disabled = false; }
@@ -797,7 +882,7 @@
     transfer.innerHTML = "";
     if (job.phase === "EXPORTING" && tr.started_at) {
       transfer.hidden = false;
-      transfer.textContent = `${isOvaExport(job) ? "Export disks to Object Storage" : isOva(job) ? "Copy data disks from Object Storage" : isAzure(job) ? "Disk export from Azure" : isOlvm(job) ? "Disk download from OLVM" : isNutanix(job) ? "Disk download from Nutanix" : "Export OVF template"}: ${tr.percent || 0}% - ${fmtBytes(tr.bytes_received)} received` +
+      transfer.textContent = `${isOvaExport(job) ? "Export disks to Object Storage" : isOva(job) ? "Copy data disks from Object Storage" : isAzure(job) ? "Disk export from Azure" : isOlvm(job) ? "Disk download from OLVM" : isNutanix(job) ? "Disk download from Nutanix" : isProxmox(job) ? "Disk read from Proxmox" : "Export OVF template"}: ${tr.percent || 0}% - ${fmtBytes(tr.bytes_received)} received` +
         (tr.throughput_bps ? ` at ${fmtRate(tr.throughput_bps)} (last minute)` : "") +
         ` - running ${fmtDuration((Date.now() - new Date(tr.started_at)) / 1000)}`;
     } else if (!TERMINAL.includes(job.phase) && job.step_percent !== null && job.step_percent !== undefined) {
@@ -836,6 +921,8 @@
     const hypervJob = isHyperv(job);
     const nutanixJob = isNutanix(job);
     const nx = job.nutanix || {};
+    const proxmoxJob = isProxmox(job);
+    const px = job.proxmox || {};
     const az = job.azure || {};
     const gc = job.gcp || {};
     const aw = job.aws || {};
@@ -870,6 +957,9 @@
       ["Guest OS", `${job.vm.guest_full_name || job.vm.guest_id}${job.target.operating_system_version ? ` - release ${job.target.operating_system_version} (selected)` : ""}`],
     ] : nutanixJob ? [
       ["Source VM", el("span", { title: job.vm.moid }, `${job.vm.name} on ${nx.prism_host || "Nutanix"}${nx.cluster ? ` (${nx.cluster})` : ""} - ${job.vm.num_cpu} vCPU, ${fmtBytes(job.vm.memory_mb * 1024 * 1024)} RAM, ${job.vm.disks.length} disk(s)`)],
+      ["Guest OS", `${job.vm.guest_full_name || job.vm.guest_id}${job.target.operating_system_version ? ` - release ${job.target.operating_system_version} (selected)` : ""}`],
+    ] : proxmoxJob ? [
+      ["Source VM", el("span", { title: `vmid ${job.vm.moid}` }, `${job.vm.name} (${job.vm.moid}) on ${px.node || "Proxmox"}${px.api_host ? ` @ ${px.api_host}` : ""} - ${job.vm.num_cpu} vCPU, ${fmtBytes(job.vm.memory_mb * 1024 * 1024)} RAM, ${job.vm.disks.length} disk(s)`)],
       ["Guest OS", `${job.vm.guest_full_name || job.vm.guest_id}${job.target.operating_system_version ? ` - release ${job.target.operating_system_version} (selected)` : ""}`],
     ] : hypervJob ? [
       ["Source VM", `${job.vm.name} on ${((job.hyperv || {}).host) || "Hyper-V"} - ${job.vm.num_cpu} vCPU, ${fmtBytes(job.vm.memory_mb * 1024 * 1024)} RAM, ${job.vm.disks.length} disk(s)`],
@@ -982,6 +1072,20 @@
       ...(job.network_fixup ? [["Network fix-up", fixupEl(job.network_fixup, "See diagnostics.")]] : []),
       ["Disk download", `Temporary Prism image per disk via ${nx.api === "pe" ? "Prism Element" : "Prism Central"}${job.nfc_host ? ` (${job.nfc_host})` : ""} (zero blocks not written)${job.target.volume_vpus_per_gb ? `, ${job.target.volume_vpus_per_gb} VPU/GB volumes` : ""}`],
       ...(nx.regions ? [["Region map", nx.regions]] : []),
+      ["Started by", `${job.created_by || "-"} at ${new Date(job.created_at).toLocaleString()}`],
+    ] : proxmoxJob ? [
+      ["Step", job.step || "-"],
+      ...(job.power_off_source || job.power_off_result ? [["Source power-off", { already_off: "was already stopped when the export started",
+        guest_shutdown: "shut down in Proxmox before the disk copy (it stays stopped)",
+        powered_off: "stopped hard in Proxmox before the disk copy (the guest did not shut down in time)" }[job.power_off_result]
+        || "the VM was running when the job was created; it is shut down right before the disk copy"]] : []),
+      ...(px.nbd_exports && px.nbd_exports.length ? [["NBD exports", el("span", {}, ...px.nbd_exports.map((s) => el("div", { class: "ocid", title: s }, s)),
+        el("span", { class: "muted" }, terminal ? `left running on ${px.node} (run the cleanup again while logged in to Proxmox, or kill the qemu-nbd process on the node)` : "stopped after each disk is copied"))]] : []),
+      ...(job.guest_fixup ? [["Initramfs fix-up", fixupEl(job.guest_fixup, "See diagnostics.")]] : []),
+      ...(job.network_fixup ? [["Network fix-up", fixupEl(job.network_fixup, "See diagnostics.")]] : []),
+      ["Disk read", `SSH to ${px.ssh_host || job.nfc_host || px.node || "the node"}, read-only qemu-nbd export per disk (data extents only, zero blocks not written)${job.target.volume_vpus_per_gb ? `, ${job.target.volume_vpus_per_gb} VPU/GB volumes` : ""}`],
+      ...(px.host_key_fingerprint ? [["SSH host key", el("span", { class: "ocid" }, px.host_key_fingerprint)]] : []),
+      ...(px.extents ? [["Data extents", px.extents]] : []),
       ["Started by", `${job.created_by || "-"} at ${new Date(job.created_at).toLocaleString()}`],
     ] : hypervJob ? [
       ["Step", job.step || "-"],
@@ -1193,14 +1297,16 @@
     const olvm = !!(opts && opts.olvm);
     const hyperv = !!(opts && opts.hyperv);
     const nutanix = !!(opts && opts.nutanix);
+    const proxmox = !!(opts && opts.proxmox);
     const clustered = olvm || nutanix;
     app.innerHTML = "";
     app.append(tpl("tpl-vms"));
-    if (clustered || hyperv) {
+    if (clustered || hyperv || proxmox) {
+      const where = clustered ? "Cluster" : proxmox ? "Node" : "Host";
       const clusterHead = app.querySelector("table.vms thead th:nth-child(2)");
-      if (clusterHead) clusterHead.textContent = clustered ? "Cluster" : "Host";
+      if (clusterHead) clusterHead.textContent = where;
       const filterBox = document.getElementById("vm-filter");
-      if (filterBox) filterBox.placeholder = clustered ? "Filter by name, cluster or guest OS" : "Filter by name, host or guest OS";
+      if (filterBox) filterBox.placeholder = `Filter by name, ${where.toLowerCase()} or guest OS`;
     }
     const rows = document.getElementById("vm-rows");
     const filter = document.getElementById("vm-filter");
@@ -1254,6 +1360,7 @@
           : off ? "" : on ? (olvm ? "The VM is powered on: it will be shut down in OLVM just before the disk export"
             : hyperv ? "The VM is powered on: it will be shut down in Hyper-V just before the disk export"
             : nutanix ? "The VM is powered on: it will be shut down in Prism just before the disk export"
+            : proxmox ? "The VM is running: it will be shut down in Proxmox just before the disk copy"
             : "The VM is powered on: it will be shut down just before the disk export")
             : "Resume and shut down, or power off the VM first";
         rows.append(el("tr", {},
@@ -1266,7 +1373,7 @@
           el("td", {}, job ? el("a", { href: `#/jobs/${job.id}`, class: "phase " + job.phase }, job.phase) : el("span", { class: "muted" }, "-")),
           el("td", {}, active
             ? el("a", { href: `#/jobs/${job.id}`, class: "button secondary small" }, "View job")
-            : el("a", { href: olvm ? `#/olvm/export/${encodeURIComponent(vm.moid)}` : hyperv ? `#/hyperv/export/${encodeURIComponent(vm.moid)}` : nutanix ? `#/nutanix/export/${encodeURIComponent(vm.moid)}` : `#/export/${vm.moid}`, class: "button primary small" + (exportable ? "" : " disabled"), title: why }, "Migrate"))));
+            : el("a", { href: olvm ? `#/olvm/export/${encodeURIComponent(vm.moid)}` : hyperv ? `#/hyperv/export/${encodeURIComponent(vm.moid)}` : nutanix ? `#/nutanix/export/${encodeURIComponent(vm.moid)}` : proxmox ? `#/proxmox/export/${encodeURIComponent(vm.moid)}` : `#/export/${vm.moid}`, class: "button primary small" + (exportable ? "" : " disabled"), title: why }, "Migrate"))));
       }
       if (!visible.length) rows.append(el("tr", {}, el("td", { colspan: 8, class: "muted" }, vms.length ? "No virtual machines match the filters." : "No virtual machines found in this inventory.")));
       count.textContent = filtered.length === vms.length ? `${vms.length} virtual machines` : `${filtered.length} of ${vms.length} virtual machines`;
@@ -1287,7 +1394,7 @@
       loading = true;
       showLoading();
       try {
-        const [list, jobs] = await Promise.all([api("GET", (olvm ? "/olvm/vms" : hyperv ? "/hyperv/vms" : nutanix ? "/nutanix/vms" : "/vms") + (refresh ? "?refresh=true" : "")), api("GET", "/jobs")]);
+        const [list, jobs] = await Promise.all([api("GET", (olvm ? "/olvm/vms" : hyperv ? "/hyperv/vms" : nutanix ? "/nutanix/vms" : proxmox ? "/proxmox/vms" : "/vms") + (refresh ? "?refresh=true" : "")), api("GET", "/jobs")]);
         vms = list;
         state.jobsByVm = {};
         for (const j of jobs) if (j.vm && !state.jobsByVm[j.vm.moid]) state.jobsByVm[j.vm.moid] = j; // jobs are newest first
@@ -1485,6 +1592,7 @@
     const olvm = !!(src && src.olvm);
     const hyperv = !!(src && src.hyperv);
     const nutanix = !!(src && src.nutanix);
+    const proxmox = !!(src && src.proxmox);
     app.innerHTML = "";
     app.append(tpl("tpl-export"));
     const form = document.getElementById("target-form");
@@ -1505,6 +1613,7 @@
           : olvm ? `/olvm/vm?id=${encodeURIComponent(moid)}`
           : hyperv ? `/hyperv/vm?id=${encodeURIComponent(moid)}`
           : nutanix ? `/nutanix/vm?id=${encodeURIComponent(moid)}`
+          : proxmox ? `/proxmox/vm?id=${encodeURIComponent(moid)}`
           : `/vms/${encodeURIComponent(moid)}`;
     if (gcp) document.querySelector("#vm-card .toolbar a").href = "#/gcp/vms";
     else if (aws) document.querySelector("#vm-card .toolbar a").href = "#/aws/vms";
@@ -1512,6 +1621,11 @@
     else if (olvm) document.querySelector("#vm-card .toolbar a").href = "#/olvm/vms";
     else if (hyperv) document.querySelector("#vm-card .toolbar a").href = "#/hyperv/vms";
     else if (nutanix) document.querySelector("#vm-card .toolbar a").href = "#/nutanix/vms";
+    else if (proxmox) document.querySelector("#vm-card .toolbar a").href = "#/proxmox/vms";
+    if (proxmox) {
+      document.getElementById("power-off-note").innerHTML =
+        "<strong>This VM is running.</strong> Starting the migration <strong>shuts it down</strong> in Proxmox right before the disk copy (after the OCI instance and volumes are prepared): an ACPI shutdown (through the QEMU guest agent when enabled), then a hard stop if it does not stop in time. The VM stays stopped. You will be asked to confirm.";
+    }
     if (nutanix) {
       document.getElementById("power-off-note").innerHTML =
         "<strong>This VM is powered on.</strong> Starting the migration <strong>shuts it down</strong> in Prism right before the disk export (after the OCI instance and volumes are prepared): an ACPI shutdown, then a hard power off if it does not stop in time. The VM stays powered off. You will be asked to confirm.";
@@ -1542,6 +1656,7 @@
             : olvm ? ["Cluster", vm.host_name || "-"]
             : hyperv ? ["Hyper-V host", vm.host_name || "-"]
             : nutanix ? ["Cluster", vm.host_name || "-"]
+            : proxmox ? ["Node / vmid", `${vm.host_name || "-"} / ${vm.moid}`]
             : ["ESXi host", vm.host_name || "-"],
       ["CPU / memory", `${vm.num_cpu} vCPU / ${fmtBytes(vm.memory_mb * 1024 * 1024)}`],
       ["Firmware", vm.firmware.toUpperCase() + (vm.secure_boot ? " (secure boot)" : "") + (vm.has_vtpm ? " + vTPM" : "")],
@@ -1653,7 +1768,7 @@
     const osLabel = document.getElementById("os-version-label");
     const osSel = sel("operating_system_version");
     const osHint = document.getElementById("os-version-hint");
-    const from = gcp ? "Google Cloud" : aws ? "Amazon EC2" : azure ? "Azure" : olvm ? "OLVM" : hyperv ? "Hyper-V" : nutanix ? "Nutanix" : "vCenter";
+    const from = gcp ? "Google Cloud" : aws ? "Amazon EC2" : azure ? "Azure" : olvm ? "OLVM" : hyperv ? "Hyper-V" : nutanix ? "Nutanix" : proxmox ? "Proxmox" : "vCenter";
     const catalog = Array.isArray(osCatalog) ? osCatalog : [];
     for (const entry of catalog) osNameSel.append(el("option", { value: entry.operating_system }, entry.operating_system));
     const detectedName = osInfo.operating_system || "";
@@ -1734,12 +1849,12 @@
     document.getElementById("gcp-transfer-note").hidden = !gcp;
     document.getElementById("azure-transfer-note").hidden = !azure;
     document.getElementById("aws-transfer-note").hidden = !aws;
-    document.getElementById("nfc-options").hidden = azure || gcp || aws || olvm || hyperv || nutanix;
+    document.getElementById("nfc-options").hidden = azure || gcp || aws || olvm || hyperv || nutanix || proxmox;
     document.getElementById("olvm-transfer-options").hidden = !olvm;
     document.getElementById("esxi-host-hint").textContent = vm.host_name ? `(${vm.host_name})` : "";
     sel("nfc_direct_to_esxi").disabled = !vm.host_name;
     // the NFC options are vCenter-only; Azure downloads page ranges instead
-    document.getElementById("nfc-options").hidden = azure || gcp || aws || olvm || hyperv || nutanix;
+    document.getElementById("nfc-options").hidden = azure || gcp || aws || olvm || hyperv || nutanix || proxmox;
     document.getElementById("azure-transfer-note").hidden = !azure;
     renderSizing();
 
@@ -1771,9 +1886,9 @@
         compatibility_mode: fd.get("compatibility_mode") === "on",
         boot_volume_type_override: fd.get("boot_volume_type_override") || null,
         network_type_override: fd.get("network_type_override") || null,
-        nfc_direct_to_esxi: !azure && !gcp && !aws && !olvm && !hyperv && !nutanix && fd.get("nfc_direct_to_esxi") === "on",
+        nfc_direct_to_esxi: !azure && !gcp && !aws && !olvm && !hyperv && !nutanix && !proxmox && fd.get("nfc_direct_to_esxi") === "on",
         olvm_direct_from_host: olvm && fd.get("olvm_direct_from_host") === "on",
-        pipelined_decode: !azure && !gcp && !aws && !olvm && !hyperv && !nutanix && fd.get("pipelined_decode") === "on",
+        pipelined_decode: !azure && !gcp && !aws && !olvm && !hyperv && !nutanix && !proxmox && fd.get("pipelined_decode") === "on",
         rebuild_initramfs: !isWin && fd.get("rebuild_initramfs") === "on",
         fix_network: !isWin && fd.get("fix_network") === "on",
         azure_cleanup: azure && !isWin && fd.get("azure_cleanup") === "on",
@@ -1815,6 +1930,13 @@
             "if the guest does not stop in time the VM is powered off hard.\n\n" +
             "The VM stays powered off in Prism afterwards.\n\n" +
             `Power off "${vm.name}" and migrate it?`)
+          : proxmox
+          ? confirm(`WARNING: "${vm.name}" is running in Proxmox VE.\n\n` +
+            `Starting this migration will SHUT DOWN the VM "${vm.name}" right before the disk copy ` +
+            "(after the OCI instance and volumes are prepared). Proxmox sends an ACPI shutdown (through the QEMU guest agent when enabled); " +
+            "if the guest does not stop in time the VM is stopped hard.\n\n" +
+            "The VM stays stopped in Proxmox afterwards.\n\n" +
+            `Shut down "${vm.name}" and migrate it?`)
           : azure
           ? confirm(`WARNING: "${vm.name}" is running in Azure.\n\n` +
             `Starting this migration will DEALLOCATE (stop) the VM "${vm.name}" right before the disk export ` +
@@ -1844,6 +1966,8 @@
           ? await api("POST", "/jobs/hyperv", { vm_id: moid, target, power_off_source: inspection.needs_power_off })
           : nutanix
           ? await api("POST", "/jobs/nutanix", { vm_id: moid, target, power_off_source: inspection.needs_power_off })
+          : proxmox
+          ? await api("POST", "/jobs/proxmox", { vm_id: moid, target, power_off_source: inspection.needs_power_off })
           : await api("POST", "/jobs", { vm_moid: moid, target, power_off_source: inspection.needs_power_off });
         location.hash = `#/jobs/${job.id}`;  // follow the migration on its own page
       } catch (e) { formError.textContent = e.message; submit.disabled = false; }
@@ -2516,7 +2640,7 @@
       if (p === "ACTIVE" ? TERMINAL.includes(j.phase) : p && j.phase !== p) return false;
       const q = search.value.trim().toLowerCase();
       const target = j.instance_display_name || j.target.display_name || "";
-      const extra = j.iso ? j.iso.bucket : j.ova ? j.ova.bucket : j.ova_export ? `${j.ova_export.bucket} ${j.ova_export.prefix}` : j.azure ? `${j.azure.resource_group} ${j.azure.subscription_name}` : j.olvm ? `${j.olvm.engine_host} ${j.olvm.cluster}` : j.nutanix ? `${j.nutanix.prism_host} ${j.nutanix.cluster}` : "";
+      const extra = j.iso ? j.iso.bucket : j.ova ? j.ova.bucket : j.ova_export ? `${j.ova_export.bucket} ${j.ova_export.prefix}` : j.azure ? `${j.azure.resource_group} ${j.azure.subscription_name}` : j.olvm ? `${j.olvm.engine_host} ${j.olvm.cluster}` : j.nutanix ? `${j.nutanix.prism_host} ${j.nutanix.cluster}` : j.proxmox ? `${j.proxmox.api_host} ${j.proxmox.node} ${j.proxmox.vmid}` : "";
       return !q || `${sourceTypeLabel(j)} ${sourceName(j)} ${extra} ${target}`.toLowerCase().includes(q);
     };
 
@@ -2534,7 +2658,8 @@
         : (j.instance_display_name || j.target.display_name || sourceName(j));
       const where = j.azure ? el("span", { class: "muted" }, ` (${j.azure.resource_group})`)
         : j.olvm && j.olvm.cluster ? el("span", { class: "muted" }, ` (${j.olvm.cluster})`)
-          : j.nutanix && j.nutanix.cluster ? el("span", { class: "muted" }, ` (${j.nutanix.cluster})`) : null;
+          : j.nutanix && j.nutanix.cluster ? el("span", { class: "muted" }, ` (${j.nutanix.cluster})`)
+            : j.proxmox && j.proxmox.node ? el("span", { class: "muted" }, ` (${j.proxmox.node})`) : null;
       const type = sourceTypeLabel(j);
       return el("td", { class: "name", title: j.azure ? `${type}\n${sourceVm}\n${targetVm}\n${j.azure.subscription_name || j.azure.subscription_id}/${j.azure.resource_group}` : `${type}\n${sourceVm}\n${targetVm}` },
         el("div", { class: "job-source" },
@@ -3252,6 +3377,7 @@
         if (hash === "#/olvm/login") return showOlvmLogin();
         if (hash === "#/hyperv/login") return showHypervLogin();
         if (hash === "#/nutanix/login") return showNutanixLogin();
+        if (hash === "#/proxmox/login") return showProxmoxLogin();
         try { setUser(await api("POST", "/auth/anonymous")); }
         catch (e2) { showError(e2.message); return; }
       }
@@ -3270,6 +3396,7 @@
           : hash.startsWith("#/olvm/export/") ? "#/olvm/vms"
           : hash.startsWith("#/hyperv/export/") ? "#/hyperv/vms"
           : hash.startsWith("#/nutanix/export/") ? "#/nutanix/vms"
+          : hash.startsWith("#/proxmox/export/") ? "#/proxmox/vms"
           : hash.startsWith("#/export/") ? "#/vms" : hash;
     const homeLink = document.getElementById("home-link");
     if (homeLink) homeLink.classList.toggle("active", hash === "#/start");
@@ -3284,6 +3411,7 @@
     const olvm = hasOlvm(state.me);
     const hyperv = hasHyperv(state.me);
     const nutanix = hasNutanix(state.me);
+    const proxmox = hasProxmox(state.me);
     if (hash === "#/start") return startView();
     if (hash === "#/unlock" || hash === "#/first-use") { location.hash = "#/start"; return; }
     if (hash === "#/login") { if (!hasVcenter(state.me)) return showLogin(); location.hash = "#/vms"; return; }
@@ -3293,6 +3421,7 @@
     if (hash === "#/olvm/login") { if (!olvm) return showOlvmLogin(); location.hash = "#/olvm/vms"; return; }
     if (hash === "#/hyperv/login") { if (!hyperv) return showHypervLogin(); location.hash = "#/hyperv/vms"; return; }
     if (hash === "#/nutanix/login") { if (!nutanix) return showNutanixLogin(); location.hash = "#/nutanix/vms"; return; }
+    if (hash === "#/proxmox/login") { if (!proxmox) return showProxmoxLogin(); location.hash = "#/proxmox/vms"; return; }
     if (hash === "#/iso") return isoView();
     if (hash === "#/ova") return ovaView();
     if (hash === "#/ova-export") return ovaExportView();
@@ -3302,7 +3431,7 @@
     if ((m = /^#\/jobs\/([^/]+)\/console$/.exec(hash))) return consoleView({ kind: "job", id: decodeURIComponent(m[1]) });
     if ((m = /^#\/jobs\/(.+)$/.exec(hash))) return jobDetailView(decodeURIComponent(m[1]));
     if (hash === "#/jobs") return jobsView();
-    if (hash === "#/vms") { if (anonymous || azure || gcp || aws || olvm || hyperv || nutanix) { location.hash = "#/login"; return; } return vmsView(); }
+    if (hash === "#/vms") { if (anonymous || azure || gcp || aws || olvm || hyperv || nutanix || proxmox) { location.hash = "#/login"; return; } return vmsView(); }
     if (hash === "#/setup") return setupView();
     // the Azure inventory and export form need an Azure login, the vSphere ones a vCenter login; the login
     // pages replace whatever session the browser has (a vCenter login cannot list Azure VMs and vice versa)
@@ -3336,7 +3465,12 @@
       if ((m = /^#\/nutanix\/export\/(.+)$/.exec(hash))) return exportView(decodeURIComponent(m[1]), { nutanix: true });
       return vmsView({ nutanix: true });
     }
-    if (anonymous || azure || gcp || aws || olvm || hyperv || nutanix) { location.hash = "#/login"; return; }
+    if (hash === "#/proxmox/vms" || hash.startsWith("#/proxmox/export/")) {
+      if (!proxmox) { location.hash = "#/proxmox/login"; return; }
+      if ((m = /^#\/proxmox\/export\/(.+)$/.exec(hash))) return exportView(decodeURIComponent(m[1]), { proxmox: true });
+      return vmsView({ proxmox: true });
+    }
+    if (anonymous || azure || gcp || aws || olvm || hyperv || nutanix || proxmox) { location.hash = "#/login"; return; }
     if ((m = /^#\/export\/(.+)$/.exec(hash))) return exportView(decodeURIComponent(m[1]));
     return vmsView();
   }

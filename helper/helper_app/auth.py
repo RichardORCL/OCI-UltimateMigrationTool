@@ -90,6 +90,14 @@ async def require_nutanix_session(request: Request) -> UserSession:
     return session
 
 
+async def require_proxmox_session(request: Request) -> UserSession:
+    """A session with a Proxmox VE login behind it (Proxmox inventory and migrations)."""
+    session = await require_session(request)
+    if session.proxmox is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "this function needs a Proxmox login")
+    return session
+
+
 async def require_aws_session(request: Request) -> UserSession:
     """A session with an AWS IAM login behind it (EC2 inventory and migrations)."""
     session = await require_session(request)
