@@ -43,8 +43,8 @@ def _run(shell: NodeShell, command: str, what: str, timeout: float = 300.0) -> s
     result = shell.run(command, timeout=timeout)
     if result.exit_status != 0:
         detail = (result.stderr or result.stdout).strip().splitlines()
-        raise SshError(f"{what} on {shell.host} failed (exit {result.exit_status}): "
-                       f"{detail[-1] if detail else 'no output'}"[:600])
+        msg = next((line for line in detail if line.strip()), detail[-1] if detail else "no output")
+        raise SshError(f"{what} on {shell.host} failed (exit {result.exit_status}): {msg}"[:600])
     return result.stdout
 
 
@@ -103,7 +103,8 @@ def stop_command(sudo: str, sock: str) -> str:
 
 
 def start_command(sudo: str, user: str, sock: str, path: str, fmt: str, clients: int) -> str:
-    cmd = (f"{sudo}qemu-nbd --read-only --force-share --persistent --shared={int(clients)} --fork "
+    # qemu-img accepts -U (--force-share); qemu-nbd does not — use --read-only only.
+    cmd = (f"{sudo}qemu-nbd --read-only --persistent --shared={int(clients)} --fork "
            f"--format={fmt} --socket={shlex.quote(sock)} --pid-file={shlex.quote(pid_path(sock))} "
            f"{shlex.quote(path)}")
     if sudo:

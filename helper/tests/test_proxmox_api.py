@@ -136,7 +136,7 @@ def test_proxmox_migration_of_a_running_vm(env):
     assert "scsi0:" in px["extents"] and "scsi1:" in px["extents"]
     assert job["nfc_host"] == NODE_IPS["pve1"]
     started = [c for h, c in fleet.commands if c.startswith("qemu-nbd")]
-    assert all("--read-only" in c and "--shared=5" in c for c in started)
+    assert all("--read-only" in c and "--shared=5" in c and "--force-share" not in c for c in started)
     tags = env.fake.compute.launch_details[-1].freeform_tags
     assert tags["oci-umt-source-proxmox"] == f"{HOST}/pve1/{WEB}"
     assert "Proxmox node pve1" in tags["oci-umt-source-vm-details"]
